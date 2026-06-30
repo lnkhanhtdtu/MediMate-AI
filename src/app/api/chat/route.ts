@@ -83,6 +83,10 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
           enum: ['ADD_MEDICATION', 'LOG_TAKEN', 'GENERAL_CHAT'],
           description: 'Hành động được xác định từ tin nhắn hoặc hình ảnh đơn thuốc.',
         },
+        prescription_name: {
+          type: 'STRING',
+          description: 'Tên hoặc nhãn của đơn thuốc. Hãy tự động nhận diện từ hình ảnh đơn thuốc hoặc tin nhắn (ví dụ: "Đơn thuốc Cao huyết áp - BV Bạch Mai", "Đơn khớp - Bác sĩ Hùng"). Tên nên ngắn gọn, phản ánh đúng chẩn đoán bệnh hoặc bệnh viện. Nếu không xác định được, hãy để trống hoặc trả về null.',
+        },
         medication_details: {
           type: 'ARRAY',
           items: {
@@ -158,11 +162,13 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
       const savedMeds = []
       const warnings = []
 
-      // Generate a default prescription name based on source (OCR image vs chat) and date
-      const dateStr = new Date().toLocaleDateString('vi-VN')
-      const defaultPrescriptionName = contentParts.some(p => typeof p === 'object' && 'inlineData' in p)
-        ? `Đơn thuốc hình ảnh (${dateStr})`
-        : `Đơn thuốc từ chat (${dateStr})`
+      // Generate a default prescription name based on source (OCR image vs chat) and date/time
+      const now = new Date()
+      const dateStr = now.toLocaleDateString('vi-VN')
+      const timeStr = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+      const defaultPrescriptionName = nluResult.prescription_name || (contentParts.some(p => typeof p === 'object' && 'inlineData' in p)
+        ? `Đơn thuốc hình ảnh (${dateStr} ${timeStr})`
+        : `Đơn thuốc từ chat (${dateStr} ${timeStr})`)
 
       for (const newMed of newMeds) {
         const existingDrugNames = [

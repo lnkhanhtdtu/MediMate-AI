@@ -15,6 +15,7 @@ export async function GET(request: Request) {
     const date = searchParams.get('date') || undefined
 
     const logs = await getMedicationLogs(date)
+    console.log('API LOGS RESPONSE SAMPLE:', JSON.stringify(logs.slice(0, 1), null, 2))
     return NextResponse.json(logs)
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 })

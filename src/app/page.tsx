@@ -58,10 +58,168 @@ interface ChatMessage {
   content: string
 }
 
+const translations = {
+  vi: {
+    title: "MediMate AI",
+    subtitle: "Trợ lý Sức khỏe Cá nhân",
+    streak: "Chuỗi Ngày (Streak)",
+    streakSub: "Đã uống thuốc đều đặn!",
+    badges: "Huy Hiệu Đạt Được",
+    badgesSub: "Thành tích tuân thủ điều trị",
+    todaySchedule: "Lịch Uống Thuốc Hôm Nay",
+    noMedsToday: "Chưa có lịch trình thuốc nào cho hôm nay.",
+    medList: "Danh Sách Thuốc Đang Dùng",
+    addFast: "Thêm Nhanh",
+    noMedsRegistered: "Chưa đăng ký loại thuốc nào.",
+    chatPrompt: "Hãy chat với MediMate AI ở khung bên phải hoặc chụp đơn thuốc để thêm thuốc!",
+    guardian: "Giám Hộ & Cảnh Báo Khẩn Cấp",
+    guardianName: "Người nhận cảnh báo:",
+    guardianEmail: "Email liên hệ:",
+    alertHistory: "Lịch sử gửi cảnh báo:",
+    setup: "Thiết lập",
+    takeGroup: "Uống nhóm",
+    skip: "Bỏ qua",
+    taken: "Đã uống",
+    scheduled: "Chưa uống",
+    skippedBadge: "Bỏ qua",
+    medName: "Tên thuốc",
+    dosage: "Liều lượng",
+    frequency: "Tần suất",
+    time: "Giờ uống",
+    stock: "Số lượng thuốc (Tồn kho)",
+    dosageQty: "Số viên uống mỗi lần",
+    save: "Lưu Lại",
+    cancel: "Hủy",
+    prescriptionName: "Nhãn đơn thuốc (Tùy chọn)",
+    course: "Liệu trình",
+    remaining: "Còn lại",
+    estimatedEnd: "dự kiến hết ngày",
+    demoSignIn: "Dùng Thử Tài Khoản Demo (Không Cần Đăng Ký)",
+    customLabel: "Nhãn đơn tự đặt hoặc nhập mới",
+    optional: "Tùy chọn",
+    guardianSetup: "Cấu Hình Người Bảo Hộ (Caregiver)",
+    guardianNameInput: "Tên người bảo hộ",
+    guardianEmailInput: "Email nhận cảnh báo trễ thuốc",
+    saveConfig: "Lưu Cấu Hình",
+    weekly: "Hàng tuần",
+    everyOtherDay: "Cách ngày",
+    daily: "Hàng ngày",
+    editMed: "Chỉnh Sửa Thông Tin Thuốc",
+    initialStock: "Tổng kho ban đầu",
+    remainingStock: "Tồn kho còn lại",
+    deleteMed: "Xóa Thuốc",
+    addMedTitle: "Đăng Ký Lịch Uống Thuốc Mới",
+    emptyLogs: "Chưa có nhật ký hôm nay.",
+    emptyMeds: "Chưa có thuốc nào.",
+    quickAddPlaceholder: "Ví dụ: Aspirin, Paracetamol",
+    logout: "Đăng xuất",
+    welcome: "Xin chào! Tôi là trợ lý sức khỏe MediMate AI. Bạn có thể nhập lịch uống thuốc bằng ngôn ngữ tự nhiên (ví dụ: \"Nhắc tớ uống Aspirin 81mg lúc 8h sáng hàng ngày\") hoặc nhắn cho tôi khi đã uống thuốc (ví dụ: \"Tớ đã uống Aspirin rồi\"). Tôi sẽ tự động kiểm tra tương tác thuốc giúp bạn nhé! 💊",
+    typeMsg: "Nhập tin nhắn nhắc thuốc, hỏi đáp sức khỏe...",
+    aiThinking: "MediMate AI đang phân tích...",
+    send: "Gửi",
+    loginTitle: "Chào Mừng Đến Với MediMate AI",
+    loginSub: "Trợ lý ảo thông minh nhắc lịch và phân tích tương tác thuốc bằng AI",
+    authLogin: "Đăng Nhập",
+    authSignup: "Đăng Ký",
+    emailLabel: "Địa chỉ Email",
+    passLabel: "Mật khẩu",
+    emailPlaceholder: "name@example.com",
+    passPlaceholder: "Nhập mật khẩu",
+    noAccount: "Chưa có tài khoản? Đăng ký ngay",
+    haveAccount: "Đã có tài khoản? Đăng nhập",
+    days: "ngày",
+    capsules: "viên",
+    or: "Hoặc",
+    processing: "Đang xử lý...",
+    guardianAlert: "Cảnh báo khẩn",
+    guardianAlertSent: "Gửi thông báo đến",
+    dueToMissed: "do bạn bỏ qua/trễ giờ uống thuốc",
+  },
+  en: {
+    title: "MediMate AI",
+    subtitle: "Personal Health Agent",
+    streak: "Compliance Streak",
+    streakSub: "Consistent pill adherence!",
+    badges: "Badges Earned",
+    badgesSub: "Adherence achievements",
+    todaySchedule: "Today's Medication Schedule",
+    noMedsToday: "No medications scheduled for today.",
+    medList: "Current Medications List",
+    addFast: "Quick Add",
+    noMedsRegistered: "No medications registered.",
+    chatPrompt: "Chat with MediMate AI on the right or upload a prescription to add medications!",
+    guardian: "Guardian & Emergency Warning",
+    guardianName: "Recipient Name:",
+    guardianEmail: "Contact Email:",
+    alertHistory: "Alert History:",
+    setup: "Configure",
+    takeGroup: "Take Group",
+    skip: "Skip",
+    taken: "Taken",
+    scheduled: "Scheduled",
+    skippedBadge: "Skipped",
+    medName: "Medication Name",
+    dosage: "Dosage",
+    frequency: "Frequency",
+    time: "Time",
+    stock: "Stock Quantity",
+    dosageQty: "Dosage Quantity",
+    save: "Save",
+    cancel: "Cancel",
+    prescriptionName: "Prescription Label (Optional)",
+    course: "Duration",
+    remaining: "Remaining",
+    estimatedEnd: "estimated end date",
+    demoSignIn: "Try Demo Account (No Registration Required)",
+    customLabel: "Custom label or enter new one",
+    optional: "Optional",
+    guardianSetup: "Configure Guardian (Caregiver)",
+    guardianNameInput: "Guardian Name",
+    guardianEmailInput: "Alert Recipient Email",
+    saveConfig: "Save Configuration",
+    weekly: "Weekly",
+    everyOtherDay: "Every Other Day",
+    daily: "Daily",
+    editMed: "Edit Medication Details",
+    initialStock: "Initial Stock",
+    remainingStock: "Remaining Stock",
+    deleteMed: "Delete Medication",
+    addMedTitle: "Add New Medication Schedule",
+    emptyLogs: "No logs for today.",
+    emptyMeds: "No medications registered.",
+    quickAddPlaceholder: "e.g. Aspirin, Paracetamol",
+    logout: "Log Out",
+    welcome: "Hello! I am your MediMate AI health assistant. You can enter your medication schedule using natural language (e.g., \"Remind me to take Aspirin 81mg at 8 AM daily\") or tell me when you have taken a pill (e.g., \"I took my Aspirin\"). I will automatically check for drug interactions for you! 💊",
+    typeMsg: "Type a medication reminder or ask health questions...",
+    aiThinking: "MediMate AI is analyzing...",
+    send: "Send",
+    loginTitle: "Welcome to MediMate AI",
+    loginSub: "Intelligent virtual assistant for medication reminders and AI drug interaction checks",
+    authLogin: "Log In",
+    authSignup: "Sign Up",
+    emailLabel: "Email Address",
+    passLabel: "Password",
+    emailPlaceholder: "name@example.com",
+    passPlaceholder: "Enter your password",
+    noAccount: "Don't have an account? Sign up",
+    haveAccount: "Already have an account? Log in",
+    days: "days",
+    capsules: "pills",
+    or: "Or",
+    processing: "Processing...",
+    guardianAlert: "Emergency Alert",
+    guardianAlertSent: "Alert sent to",
+    dueToMissed: "due to missing medication",
+  }
+}
+
 export default function Home() {
   const supabase = createClient()
 
   // State Variables
+  const [lang, setLang] = useState<'vi' | 'en'>('vi')
+  const t = translations[lang]
+
   const [user, setUser] = useState<any>(null)
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
@@ -139,7 +297,7 @@ export default function Home() {
 
   // Caregiver alert trigger helper
   const triggerCaregiverEscalation = (medName: string, time: string) => {
-    const alertMsg = `📧 [Cảnh báo khẩn] Gửi thông báo đến ${caregiverName} (${caregiverEmail}) do bạn bỏ qua/trễ giờ uống thuốc ${medName} (lịch: ${time})!`
+    const alertMsg = `📧 [${t.guardianAlert}] ${t.guardianAlertSent} ${caregiverName} (${caregiverEmail}) ${t.dueToMissed} ${medName} (lịch: ${time})!`
     setCaregiverAlerts((prev) => [alertMsg, ...prev])
   }
 
@@ -285,6 +443,16 @@ export default function Home() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Update initial welcome message on language switch
+  useEffect(() => {
+    setMessages(prev => {
+      if (prev.length === 1 && prev[0].role === 'model') {
+        return [{ role: 'model', content: t.welcome }]
+      }
+      return prev
+    })
+  }, [lang, t.welcome])
 
   // Auth State Listener
   useEffect(() => {
@@ -785,6 +953,14 @@ export default function Home() {
             </div>
 
             <div className="flex items-center gap-4">
+              <button
+                onClick={() => setLang(lang === 'vi' ? 'en' : 'vi')}
+                className="px-2.5 py-1 bg-slate-900 border border-slate-800 hover:border-teal-500/50 text-slate-300 rounded-full text-xs font-semibold cursor-pointer select-none transition-all flex items-center gap-1"
+              >
+                <span>{lang === 'vi' ? '🇻🇳' : '🇬🇧'}</span>
+                <span>{lang === 'vi' ? 'VI' : 'EN'}</span>
+              </button>
+
               <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-full text-xs">
                 <UserIcon className="w-3.5 h-3.5 text-slate-400" />
                 <span className="text-slate-300 font-medium">{user.email}</span>
@@ -793,7 +969,7 @@ export default function Home() {
               <button
                 onClick={handleSignOut}
                 className="p-2 text-slate-400 hover:text-rose-400 hover:bg-slate-900 rounded-lg transition-colors cursor-pointer"
-                title="Đăng xuất"
+                title={t.logout}
               >
                 <LogOut className="w-5 h-5" />
               </button>
@@ -816,10 +992,10 @@ export default function Home() {
                   </div>
                   <div>
                     <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-                      Chuỗi Ngày (Streak)
+                      {t.streak}
                     </div>
                     <div className="text-xl font-black text-orange-400">
-                      {calculateStreak()} Ngày Liên Tục
+                      {calculateStreak()} {lang === 'vi' ? 'Ngày Liên Tục' : 'Days Streak'}
                     </div>
                   </div>
                 </div>
@@ -832,7 +1008,7 @@ export default function Home() {
                   </div>
                   <div>
                     <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-                      Huy Hiệu Đạt Được
+                      {t.badges}
                     </div>
                     <div className="text-xl font-black text-indigo-300">
                       {badges.length} / 4
@@ -878,23 +1054,23 @@ export default function Home() {
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <Bell className="w-4 h-4 text-rose-400" />
-                    <h3 className="text-sm font-bold text-slate-200">Giám Hộ & Cảnh Báo Khẩn Cấp</h3>
+                    <h3 className="text-sm font-bold text-slate-200">{t.guardian}</h3>
                   </div>
                   <button 
                     type="button"
                     onClick={() => setShowCaregiverModal(true)}
                     className="text-xs text-rose-400 hover:underline cursor-pointer"
                   >
-                    Thiết lập
+                    {t.setup}
                   </button>
                 </div>
                 <div className="text-xs text-slate-400 flex flex-col gap-1.5">
                   <div className="flex justify-between">
-                    <span>Người nhận cảnh báo:</span>
+                    <span>{t.guardianName}</span>
                     <span className="font-semibold text-slate-300">{caregiverName}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Email liên hệ:</span>
+                    <span>{t.guardianEmail}</span>
                     <span className="font-semibold text-slate-300">{caregiverEmail}</span>
                   </div>
                 </div>
@@ -902,7 +1078,7 @@ export default function Home() {
                 {caregiverAlerts.length > 0 && (
                   <div className="mt-4 space-y-2 border-t border-slate-900 pt-3">
                     <div className="text-[10px] text-rose-400 font-bold uppercase tracking-wider">
-                      Lịch sử gửi cảnh báo:
+                      {t.alertHistory}
                     </div>
                     <div className="max-h-24 overflow-y-auto space-y-1.5 pr-1">
                       {caregiverAlerts.map((alert, idx) => (
@@ -922,11 +1098,11 @@ export default function Home() {
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <Calendar className="w-5 h-5 text-teal-400" />
-                    <h2 className="text-lg font-bold">Lịch Uống Thuốc Hôm Nay</h2>
+                    <h2 className="text-lg font-bold">{t.todaySchedule}</h2>
                   </div>
                   
                   <span className="text-xs px-2.5 py-1 bg-teal-500/10 border border-teal-500/20 text-teal-400 rounded-full font-medium">
-                    {logs.filter(l => l.status === 'taken').length}/{logs.length} Đã dùng
+                    {logs.filter(l => l.status === 'taken').length}/{logs.length} {t.taken}
                   </span>
                 </div>
 
@@ -943,80 +1119,82 @@ export default function Home() {
                 ) : (
                   <div className="space-y-4 max-h-[400px] overflow-y-auto pr-1">
                     {(() => {
-                      // 1. Group logs by prescription name
-                      const groupedByPrescription: Record<string, typeof logs> = {}
+                      // 1. Group logs by scheduled time (HH:MM)
+                      const groupedByTime: Record<string, typeof logs> = {}
                       logs.forEach(log => {
-                        const prescriptionKey = log.medication?.prescription_name || 'Thuốc lẻ / Tự thêm'
-                        if (!groupedByPrescription[prescriptionKey]) groupedByPrescription[prescriptionKey] = []
-                        groupedByPrescription[prescriptionKey].push(log)
+                        const timeKey = new Date(log.scheduled_time).toLocaleTimeString('vi-VN', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })
+                        if (!groupedByTime[timeKey]) groupedByTime[timeKey] = []
+                        groupedByTime[timeKey].push(log)
                       })
 
-                      return Object.entries(groupedByPrescription).map(([prescriptionName, prescriptionLogs]) => {
-                        // 2. Within this prescription, group logs by scheduled time (HH:MM)
-                        const groupedByTime: Record<string, typeof logs> = {}
-                        prescriptionLogs.forEach(log => {
-                          const timeKey = new Date(log.scheduled_time).toLocaleTimeString('vi-VN', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })
-                          if (!groupedByTime[timeKey]) groupedByTime[timeKey] = []
-                          groupedByTime[timeKey].push(log)
+                      return Object.entries(groupedByTime).map(([timeSlot, slotLogs]) => {
+                        const hasScheduled = slotLogs.some(l => l.status === 'scheduled')
+                        const allTaken = slotLogs.every(l => l.status === 'taken')
+
+                        // 2. Within this time slot, group logs by prescription name
+                        const groupedByPrescription: Record<string, typeof logs> = {}
+                        slotLogs.forEach(log => {
+                          const prescriptionKey = log.medication?.prescription_name || 'Thuốc lẻ / Tự thêm'
+                          if (!groupedByPrescription[prescriptionKey]) groupedByPrescription[prescriptionKey] = []
+                          groupedByPrescription[prescriptionKey].push(log)
                         })
 
                         return (
-                          <div key={prescriptionName} className="space-y-3 bg-slate-900/20 border border-slate-900/60 rounded-2xl p-4 relative overflow-hidden">
-                            {/* Prescription Header */}
-                            <div className="flex items-center gap-2 pb-2 border-b border-slate-900/40">
-                              <FileText className="w-4 h-4 text-indigo-400" />
-                              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                                {prescriptionName}
-                              </span>
+                          <div key={timeSlot} className="p-4 bg-slate-950/30 border border-slate-900/60 rounded-2xl space-y-3 relative overflow-hidden">
+                            {/* Blue decorative left bar */}
+                            <div className="absolute top-0 left-0 w-1 h-full bg-teal-500/20" />
+                            
+                            {/* Time Slot Header */}
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-900/40">
+                              <div className="flex items-center gap-1.5">
+                                <Clock className="w-4 h-4 text-teal-400" />
+                                <span className="font-bold text-sm text-slate-200">{timeSlot}</span>
+                              </div>
                             </div>
 
-                            {/* Time Slots in this Prescription */}
-                            <div className="space-y-3">
-                              {Object.entries(groupedByTime).map(([timeSlot, slotLogs]) => {
-                                const hasScheduled = slotLogs.some(l => l.status === 'scheduled')
-                                const allTaken = slotLogs.every(l => l.status === 'taken')
-
+                            {/* Prescription Subgroups */}
+                            <div className="space-y-3 pt-1">
+                              {Object.entries(groupedByPrescription).map(([prescriptionName, prescriptionLogs]) => {
+                                const hasPrescriptionScheduled = prescriptionLogs.some(l => l.status === 'scheduled')
+                                
                                 return (
-                                  <div key={timeSlot} className="p-3 bg-slate-950/40 border border-slate-900/60 rounded-xl space-y-2">
-                                    <div className="flex items-center justify-between pb-1.5 border-b border-slate-900/40">
+                                  <div key={prescriptionName} className="space-y-1.5 pl-1.5 border-l border-indigo-500/20">
+                                    {/* Subgroup Header */}
+                                    <div className="flex items-center justify-between pb-1 pr-1">
                                       <div className="flex items-center gap-1.5">
-                                        <Clock className="w-3.5 h-3.5 text-teal-400" />
-                                        <span className="font-bold text-xs text-slate-300">{timeSlot}</span>
+                                        <FileText className="w-3 h-3 text-indigo-400/80" />
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                                          {prescriptionName}
+                                        </span>
                                       </div>
 
                                       <div className="flex gap-1.5">
-                                        {hasScheduled && (
+                                        {hasPrescriptionScheduled && (
                                           <>
                                             <button
-                                              onClick={() => handleBatchTakeAll(slotLogs.filter(l => l.status === 'scheduled'))}
+                                              onClick={() => handleBatchTakeAll(prescriptionLogs.filter(l => l.status === 'scheduled'))}
                                               className="px-2 py-0.5 bg-emerald-500/10 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 rounded text-[9px] font-bold transition-all cursor-pointer"
                                             >
-                                              Uống cả nhóm
+                                              {t.takeGroup}
                                             </button>
                                             <button
-                                              onClick={() => handleBatchMissAll(slotLogs.filter(l => l.status === 'scheduled'))}
+                                              onClick={() => handleBatchMissAll(prescriptionLogs.filter(l => l.status === 'scheduled'))}
                                               className="px-2 py-0.5 bg-rose-500/10 hover:bg-rose-500 hover:text-slate-950 text-rose-400 rounded text-[9px] font-bold transition-all cursor-pointer"
                                             >
-                                              Bỏ qua
+                                              {t.skip}
                                             </button>
                                           </>
-                                        )}
-                                        {!hasScheduled && (
-                                          <span className={`text-[8px] px-1.5 py-0.5 font-bold uppercase rounded-md tracking-wider ${
-                                            allTaken ? 'bg-emerald-400/10 text-emerald-400' : 'bg-rose-400/10 text-rose-400'
-                                          }`}>
-                                            {allTaken ? 'Đã uống' : 'Đã bỏ qua'}
-                                          </span>
                                         )}
                                       </div>
                                     </div>
 
-                                    <div className="space-y-1.5">
-                                      {slotLogs.map(log => (
-                                        <div key={log.id} className="flex items-center justify-between py-0.5 pl-1">
+                                    {/* List of Medications */}
+                                    <div className="space-y-1.5 pl-1">
+                                      {prescriptionLogs.map(log => (
+                                        <div key={log.id} className="flex items-center justify-between py-0.5">
                                           <div className="flex items-center gap-2">
                                             <div className={`w-1.5 h-1.5 rounded-full ${
                                               log.status === 'taken' ? 'bg-emerald-500' : log.status === 'missed' ? 'bg-rose-500 animate-pulse' : 'bg-slate-700'
@@ -1026,7 +1204,7 @@ export default function Home() {
                                             </span>
                                             {log.medication?.dosage_quantity && log.medication.dosage_quantity >= 0.1 && (
                                               <span className="text-[9px] text-teal-400 font-semibold bg-teal-500/10 border border-teal-500/20 px-1 py-0.5 rounded">
-                                                {log.medication.dosage_quantity} viên
+                                                {log.medication.dosage_quantity} {t.capsules}
                                               </span>
                                             )}
                                           </div>
@@ -1041,7 +1219,7 @@ export default function Home() {
                                                 : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800'
                                             }`}
                                           >
-                                            {log.status === 'taken' ? 'Đã uống' : log.status === 'missed' ? 'Bỏ qua' : 'Chưa uống'}
+                                            {log.status === 'taken' ? t.taken : log.status === 'missed' ? t.skippedBadge : t.scheduled}
                                           </span>
                                         </div>
                                       ))}
@@ -1063,7 +1241,7 @@ export default function Home() {
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <Activity className="w-5 h-5 text-indigo-400" />
-                    <h2 className="text-lg font-bold">Danh Sách Thuốc Đang Dùng</h2>
+                    <h2 className="text-lg font-bold">{t.medList}</h2>
                   </div>
 
                   <button
@@ -1071,7 +1249,7 @@ export default function Home() {
                     className="p-1.5 bg-indigo-500/10 border border-indigo-500/20 hover:bg-indigo-500 hover:text-slate-950 text-indigo-400 rounded-lg transition-all flex items-center gap-1 text-xs font-bold cursor-pointer"
                   >
                     <Plus className="w-4 h-4" />
-                    Thêm Nhanh
+                    {t.addFast}
                   </button>
                 </div>
 
@@ -1083,9 +1261,9 @@ export default function Home() {
                 ) : medications.length === 0 ? (
                   <div className="text-center py-12 text-slate-500 text-sm flex-grow flex flex-col items-center justify-center">
                     <HelpCircle className="w-10 h-10 mb-2 text-slate-700" />
-                    Chưa đăng ký loại thuốc nào.
+                    {t.noMedsRegistered}
                     <br />
-                    Hãy chat với MediMate AI ở khung bên phải để thêm thuốc!
+                    {t.chatPrompt}
                   </div>
                 ) : (
                   <div className="space-y-6 overflow-y-auto max-h-[300px] md:max-h-[400px] pr-1">
@@ -1105,7 +1283,7 @@ export default function Home() {
                               {groupName}
                             </span>
                             <span className="text-[10px] px-1.5 py-0.5 bg-slate-900 text-slate-500 rounded-md font-mono font-bold">
-                              {groupMeds.length} thuốc
+                              {groupMeds.length} {lang === 'vi' ? 'thuốc' : 'meds'}
                             </span>
                           </div>
 
@@ -1126,9 +1304,9 @@ export default function Home() {
                                     <div className="font-bold text-sm text-slate-200">{med.name}</div>
                                     <div className="text-xs text-slate-400 mt-0.5 flex flex-wrap gap-x-2">
                                       <span>{med.dosage} • {med.frequency}</span>
-                                      {med.dosage_quantity && med.dosage_quantity >= 1 && (
+                                      {med.dosage_quantity && med.dosage_quantity >= 0.1 && (
                                         <span className="text-teal-400 font-medium">
-                                          (Mỗi lần: {med.dosage_quantity} viên)
+                                          ({lang === 'vi' ? 'Mỗi lần' : 'Each'}: {med.dosage_quantity} {t.capsules})
                                         </span>
                                       )}
                                     </div>
@@ -1147,11 +1325,11 @@ export default function Home() {
                                     {med.total_stock !== undefined && med.total_stock !== null && (
                                       <div className="mt-2.5 space-y-1">
                                         <div className="flex items-center justify-between text-[10px] text-slate-400">
-                                          <span>Tồn kho: <strong className={med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 ? "text-rose-400 font-bold" : "text-slate-300"}>
+                                          <span>{lang === 'vi' ? 'Tồn kho' : 'Stock'}: <strong className={med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 ? "text-rose-400 font-bold" : "text-slate-300"}>
                                             {med.remaining_stock} / {med.total_stock}
                                           </strong></span>
                                           {med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 && (
-                                            <span className="text-rose-400 font-bold animate-pulse">⚠️ Sắp hết!</span>
+                                            <span className="text-rose-400 font-bold animate-pulse">{lang === 'vi' ? '⚠️ Sắp hết!' : '⚠️ Low stock!'}</span>
                                           )}
                                         </div>
 
@@ -1168,11 +1346,11 @@ export default function Home() {
 
                                             const startDate = new Date(med.created_at)
                                             const endDate = new Date(startDate.getTime() + totalDays * 24 * 60 * 60 * 1000)
-                                            const endDateStr = endDate.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                                            const endDateStr = endDate.toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US', { day: '2-digit', month: '2-digit', year: 'numeric' })
 
                                             return (
                                               <div className="text-[10px] text-indigo-300 font-medium mt-1 leading-relaxed">
-                                                ⏱️ Liệu trình: <strong className="text-slate-200">{totalDays} ngày</strong> (Còn lại: <strong className="text-slate-200">{remainingDays} ngày</strong>, dự kiến hết ngày {endDateStr})
+                                                ⏱️ {t.course}: <strong className="text-slate-200">{totalDays} {t.days}</strong> ({t.remaining}: <strong className="text-slate-200">{remainingDays} {t.days}</strong>, {t.estimatedEnd} {endDateStr})
                                               </div>
                                             )
                                           }
@@ -1192,7 +1370,7 @@ export default function Home() {
                                           onClick={() => handleRefillStock(med.id, med.total_stock ?? 30)}
                                           className="text-[9px] text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-0.5 mt-1 cursor-pointer"
                                         >
-                                          🔄 Nạp thêm thuốc
+                                          🔄 {lang === 'vi' ? 'Nạp thêm thuốc' : 'Refill Medication'}
                                         </button>
                                       </div>
                                     )}
@@ -1203,14 +1381,14 @@ export default function Home() {
                                   <button
                                     onClick={() => handleEditMedicationClick(med)}
                                     className="p-2 text-slate-600 hover:text-indigo-400 hover:bg-slate-900 rounded-lg transition-colors cursor-pointer"
-                                    title="Sửa lịch thuốc"
+                                    title={lang === 'vi' ? 'Sửa lịch thuốc' : 'Edit Medication'}
                                   >
                                     <Pencil className="w-4 h-4" />
                                   </button>
                                   <button
                                     onClick={() => handleDeleteMedication(med.id)}
                                     className="p-2 text-slate-600 hover:text-rose-400 hover:bg-slate-900 rounded-lg transition-colors cursor-pointer"
-                                    title="Xoá lịch thuốc"
+                                    title={lang === 'vi' ? 'Xoá lịch thuốc' : 'Delete Medication'}
                                   >
                                     <Trash2 className="w-4 h-4" />
                                   </button>
@@ -1379,7 +1557,7 @@ export default function Home() {
                       ? 'bg-rose-500/20 border-rose-500/30 text-rose-400 animate-pulse' 
                       : 'bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200'
                   }`}
-                  title="Nói để nhập lịch thuốc"
+                  title={lang === 'vi' ? 'Nói để nhập lịch thuốc' : 'Speak to input schedule'}
                 >
                   <Mic className="w-5 h-5" />
                 </button>
@@ -1388,7 +1566,7 @@ export default function Home() {
                   type="text"
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
-                  placeholder={isListening ? "Đang nghe giọng nói của bạn..." : "Nhập lịch uống hoặc gửi ảnh đơn thuốc..."}
+                  placeholder={isListening ? (lang === 'vi' ? "Đang nghe..." : "Listening...") : (lang === 'vi' ? "Nhập lịch uống hoặc gửi ảnh đơn thuốc..." : "Enter schedule or send prescription image...")}
                   className="flex-grow bg-slate-900/50 border border-slate-900 focus:border-teal-500 rounded-xl px-4 py-3 text-sm focus:outline-none transition-colors"
                   disabled={loadingChat}
                 />
