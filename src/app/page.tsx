@@ -594,6 +594,7 @@ export default function Home() {
           frequency: warningInfo.medication.frequency,
           schedule: warningInfo.medication.schedule,
           total_stock: (warningInfo.medication as any).total_stock || 30,
+          dosage_quantity: (warningInfo.medication as any).dosage_quantity || 1,
         }),
       })
 
