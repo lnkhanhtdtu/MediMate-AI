@@ -758,7 +758,7 @@ export default function Home() {
             <section className={`flex-1 md:max-w-[50%] border-r border-slate-900 flex flex-col overflow-y-auto p-6 space-y-6 pb-24 md:pb-6 ${activeTab === 'dashboard' ? 'flex' : 'hidden md:flex'}`}>
               
               {/* Streaks & Badges Dashboard Component */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 shrink-0">
                 {/* Streak Card */}
                 <div className="bg-slate-900/40 border border-slate-900 rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden">
                   <div className="absolute top-0 right-0 w-16 h-16 bg-orange-500/5 rounded-full blur-lg" />
@@ -794,7 +794,7 @@ export default function Home() {
 
               {/* Badges List (Horizontal Scroll) */}
               {badges.length > 0 && (
-                <div className="bg-slate-900/20 border border-slate-900/60 rounded-2xl p-4">
+                <div className="bg-slate-900/20 border border-slate-900/60 rounded-2xl p-4 shrink-0">
                   <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">
                     Huy hiệu mở khoá
                   </div>
@@ -824,7 +824,7 @@ export default function Home() {
               )}
 
               {/* Caregiver Settings Card */}
-              <div className="bg-slate-900/40 border border-slate-900 rounded-2xl p-5 relative overflow-hidden">
+              <div className="bg-slate-900/40 border border-slate-900 rounded-2xl p-5 relative overflow-hidden shrink-0">
                 <div className="absolute top-0 right-0 w-20 h-20 bg-rose-500/5 rounded-full blur-xl" />
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
@@ -867,7 +867,7 @@ export default function Home() {
               </div>
               
               {/* Daily Checklist Tracker */}
-              <div className="bg-slate-900/40 border border-slate-900 rounded-2xl p-6 relative overflow-hidden">
+              <div className="bg-slate-900/40 border border-slate-900 rounded-2xl p-6 relative overflow-hidden shrink-0">
                 <div className="absolute top-0 right-0 w-24 h-24 bg-teal-500/5 rounded-full blur-xl" />
                 
                 <div className="flex items-center justify-between mb-4">
@@ -975,7 +975,7 @@ export default function Home() {
               </div>
 
               {/* Medication Management List */}
-              <div className="bg-slate-900/40 border border-slate-900 rounded-2xl p-6 flex-grow flex flex-col">
+              <div className="bg-slate-900/40 border border-slate-900 rounded-2xl p-6 flex flex-col shrink-0">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <Activity className="w-5 h-5 text-indigo-400" />
