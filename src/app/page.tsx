@@ -467,7 +467,48 @@ export default function Home() {
       })
       if (res.ok) {
         fetchTodayLogs()
+        fetchMedications()
       }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const handleBatchTakeAll = async (logsToTake: typeof logs) => {
+    try {
+      await Promise.all(
+        logsToTake.map(log => 
+          fetch('/api/logs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ logId: log.id, status: 'taken' }),
+          })
+        )
+      )
+      fetchTodayLogs()
+      fetchMedications()
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const handleBatchMissAll = async (logsToMiss: typeof logs) => {
+    try {
+      await Promise.all(
+        logsToMiss.map(log => 
+          fetch('/api/logs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ logId: log.id, status: 'missed' }),
+          })
+        )
+      )
+      fetchTodayLogs()
+      fetchMedications()
+      logsToMiss.forEach(log => {
+        const timeStr = new Date(log.scheduled_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+        triggerCaregiverEscalation(log.medication?.name || 'Thuốc', timeStr)
+      })
     } catch (e) {
       console.error(e)
     }
@@ -900,84 +941,94 @@ export default function Home() {
                     Chưa có lịch trình thuốc nào cho hôm nay.
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {logs.map((log) => (
-                      <div
-                        key={log.id}
-                        className={`flex items-center justify-between p-4 rounded-xl border transition-all select-none ${
-                          log.status === 'taken'
-                            ? 'bg-emerald-950/20 border-emerald-900/50 text-emerald-300'
-                            : log.status === 'missed'
-                            ? 'bg-rose-950/15 border-rose-900/30 text-rose-300 animate-pulse'
-                            : 'bg-slate-950/50 border-slate-900 hover:border-slate-800 text-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-                            log.status === 'taken' 
-                              ? 'bg-emerald-500 text-slate-950' 
-                              : log.status === 'missed' 
-                              ? 'bg-rose-500 text-slate-950' 
-                              : 'bg-slate-900 text-slate-400'
-                          }`}>
-                            {log.status === 'taken' ? (
-                              <Check className="w-4 h-4 stroke-[3px]" />
-                            ) : log.status === 'missed' ? (
-                              <X className="w-4 h-4 stroke-[3px]" />
-                            ) : (
-                              <Clock className="w-4 h-4" />
-                            )}
-                          </div>
-                          <div>
-                            <div className="font-bold text-sm">
-                              {log.medication?.name} - {log.medication?.dosage}
-                            </div>
-                            <div className="text-[10px] text-slate-500 uppercase tracking-wider mt-0.5 flex items-center gap-1.5">
-                              <Clock className="w-3 h-3 text-slate-500" />
-                              {new Date(log.scheduled_time).toLocaleTimeString('vi-VN', {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </div>
-                          </div>
-                        </div>
+                  <div className="space-y-4">
+                    {(() => {
+                      const grouped: Record<string, typeof logs> = {}
+                      logs.forEach(log => {
+                        const timeKey = new Date(log.scheduled_time).toLocaleTimeString('vi-VN', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })
+                        if (!grouped[timeKey]) grouped[timeKey] = []
+                        grouped[timeKey].push(log)
+                      })
 
-                        <div className="flex items-center gap-2">
-                          {log.status === 'scheduled' ? (
-                            <>
-                              <button
-                                onClick={() => handleToggleLogStatus(log.id, 'scheduled')}
-                                className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 rounded-lg text-xs font-bold transition-all cursor-pointer"
-                              >
-                                Uống
-                              </button>
-                              <button
-                                onClick={() => handleMarkAsMissed(
-                                  log.id, 
-                                  log.medication?.name || 'Thuốc', 
-                                  new Date(log.scheduled_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+                      return Object.entries(grouped).map(([timeSlot, slotLogs]) => {
+                        const hasScheduled = slotLogs.some(l => l.status === 'scheduled')
+                        const allTaken = slotLogs.every(l => l.status === 'taken')
+
+                        return (
+                          <div key={timeSlot} className="p-4 bg-slate-950/30 border border-slate-900/60 rounded-2xl space-y-3 relative overflow-hidden">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-teal-500/20" />
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-900/40">
+                              <div className="flex items-center gap-1.5">
+                                <Clock className="w-4 h-4 text-teal-400" />
+                                <span className="font-bold text-sm text-slate-200">{timeSlot}</span>
+                              </div>
+
+                              <div className="flex gap-1.5">
+                                {hasScheduled && (
+                                  <>
+                                    <button
+                                      onClick={() => handleBatchTakeAll(slotLogs.filter(l => l.status === 'scheduled'))}
+                                      className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                    >
+                                      Uống tất cả
+                                    </button>
+                                    <button
+                                      onClick={() => handleBatchMissAll(slotLogs.filter(l => l.status === 'scheduled'))}
+                                      className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500 hover:text-slate-950 text-rose-400 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                    >
+                                      Bỏ qua
+                                    </button>
+                                  </>
                                 )}
-                                className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500 hover:text-slate-950 text-rose-400 rounded-lg text-xs font-bold transition-all cursor-pointer"
-                              >
-                                Bỏ qua
-                              </button>
-                            </>
-                          ) : (
-                            <span 
-                              onClick={() => handleToggleLogStatus(log.id, 'taken')}
-                              className={`text-[10px] px-2 py-1 font-bold uppercase rounded-md tracking-wider cursor-pointer hover:opacity-80 transition-opacity ${
-                                log.status === 'taken'
-                                  ? 'bg-emerald-400/10 text-emerald-400'
-                                  : 'bg-rose-400/10 text-rose-400'
-                              }`}
-                              title="Nhấp để chuyển lại lịch"
-                            >
-                              {log.status === 'taken' ? 'Đã uống' : 'Bỏ qua/Trễ'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                                {!hasScheduled && (
+                                  <span className={`text-[9px] px-2 py-0.5 font-bold uppercase rounded-md tracking-wider ${
+                                    allTaken ? 'bg-emerald-400/10 text-emerald-400' : 'bg-rose-400/10 text-rose-400'
+                                  }`}>
+                                    {allTaken ? 'Đã uống xong' : 'Đã bỏ qua'}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              {slotLogs.map(log => (
+                                <div key={log.id} className="flex items-center justify-between py-1 pl-1">
+                                  <div className="flex items-center gap-2">
+                                    <div className={`w-2 h-2 rounded-full ${
+                                      log.status === 'taken' ? 'bg-emerald-500' : log.status === 'missed' ? 'bg-rose-500 animate-pulse' : 'bg-slate-700'
+                                    }`} />
+                                    <span className={`text-xs font-semibold ${log.status === 'taken' ? 'line-through text-slate-500' : 'text-slate-300'}`}>
+                                      {log.medication?.name} - {log.medication?.dosage}
+                                    </span>
+                                    {log.medication?.dosage_quantity && log.medication.dosage_quantity >= 1 && (
+                                      <span className="text-[10px] text-teal-400 font-semibold bg-teal-500/10 border border-teal-500/20 px-1.5 py-0.5 rounded">
+                                        {log.medication.dosage_quantity} viên
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <span
+                                    onClick={() => handleToggleLogStatus(log.id, log.status)}
+                                    className={`text-[9px] px-1.5 py-0.5 rounded cursor-pointer select-none transition-all font-bold border ${
+                                      log.status === 'taken'
+                                        ? 'bg-emerald-950/20 border-emerald-900/40 text-emerald-400 hover:bg-emerald-900/20'
+                                        : log.status === 'missed'
+                                        ? 'bg-rose-950/25 border-rose-900/30 text-rose-400 hover:bg-rose-900/20'
+                                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800'
+                                    }`}
+                                  >
+                                    {log.status === 'taken' ? 'Đã uống' : log.status === 'missed' ? 'Bỏ qua' : 'Chưa uống'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })
+                    })()}
                   </div>
                 )}
               </div>
@@ -1078,7 +1129,32 @@ export default function Home() {
                                             <span className="text-rose-400 font-bold animate-pulse">⚠️ Sắp hết!</span>
                                           )}
                                         </div>
-                                        <div className="w-32 h-1 bg-slate-900 rounded-full overflow-hidden flex">
+
+                                        {/* Prescription projection calculation */}
+                                        {(() => {
+                                          const timesPerDay = med.schedule.length || 1
+                                          const doseQty = med.dosage_quantity || 1
+                                          const dosePerDay = timesPerDay * doseQty
+                                          if (med.total_stock) {
+                                            const totalDays = Math.ceil(med.total_stock / dosePerDay)
+                                            const remainingDays = med.remaining_stock !== undefined && med.remaining_stock !== null 
+                                              ? Math.ceil(med.remaining_stock / dosePerDay)
+                                              : totalDays
+
+                                            const startDate = new Date(med.created_at)
+                                            const endDate = new Date(startDate.getTime() + totalDays * 24 * 60 * 60 * 1000)
+                                            const endDateStr = endDate.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+
+                                            return (
+                                              <div className="text-[10px] text-indigo-300 font-medium mt-1 leading-relaxed">
+                                                ⏱️ Liệu trình: <strong className="text-slate-200">{totalDays} ngày</strong> (Còn lại: <strong className="text-slate-200">{remainingDays} ngày</strong>, dự kiến hết ngày {endDateStr})
+                                              </div>
+                                            )
+                                          }
+                                          return null
+                                        })()}
+
+                                        <div className="w-32 h-1 bg-slate-900 rounded-full overflow-hidden flex mt-1">
                                           <div 
                                             className={`h-full rounded-full transition-all ${
                                               med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 ? "bg-rose-500 animate-pulse" : "bg-teal-500"
