@@ -18,7 +18,13 @@ import {
   HelpCircle,
   X,
   Check,
-  RotateCcw
+  RotateCcw,
+  Mic,
+  Camera,
+  Volume2,
+  Award,
+  Bell,
+  FileText
 } from 'lucide-react'
 
 // Interfaces
@@ -29,6 +35,8 @@ interface Medication {
   dosage: string
   frequency: string
   schedule: string[]
+  total_stock?: number | null
+  remaining_stock?: number | null
   created_at: string
 }
 
@@ -79,6 +87,168 @@ export default function Home() {
   const [newMedDosage, setNewMedDosage] = useState('')
   const [newMedFreq, setNewMedFreq] = useState('Hàng ngày')
   const [newMedTime, setNewMedTime] = useState('08:00')
+  const [newMedStock, setNewMedStock] = useState('30')
+
+  // UI & Feature States
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'chat'>('dashboard')
+  const [isListening, setIsListening] = useState(false)
+  const [isPlayingSpeech, setIsPlayingSpeech] = useState<number | null>(null)
+  const [selectedImage, setSelectedImage] = useState<{ data: string; mimeType: string } | null>(null)
+  const [caregiverEmail, setCaregiverEmail] = useState('mom@medimate.ai')
+  const [caregiverName, setCaregiverName] = useState('Mẹ')
+  const [showCaregiverModal, setShowCaregiverModal] = useState(false)
+  const [caregiverAlerts, setCaregiverAlerts] = useState<string[]>([])
+  const [badges, setBadges] = useState<string[]>([])
+
+  const imageInputRef = useRef<HTMLInputElement>(null)
+
+  // Badge updates effect
+  useEffect(() => {
+    const newBadges: string[] = []
+    if (medications.length > 0) {
+      newBadges.push('Chiến binh mới')
+    }
+    if (logs.some((l) => l.status === 'taken')) {
+      newBadges.push('Kỷ luật thép')
+    }
+    if (medications.length >= 2) {
+      newBadges.push('Tương tác an toàn')
+    }
+    setBadges((prev) => {
+      const merged = Array.from(new Set([...prev, ...newBadges]))
+      return merged
+    })
+  }, [medications, logs])
+
+  // Caregiver alert trigger helper
+  const triggerCaregiverEscalation = (medName: string, time: string) => {
+    const alertMsg = `📧 [Cảnh báo khẩn] Gửi thông báo đến ${caregiverName} (${caregiverEmail}) do bạn bỏ qua/trễ giờ uống thuốc ${medName} (lịch: ${time})!`
+    setCaregiverAlerts((prev) => [alertMsg, ...prev])
+  }
+
+  // Handle Mark as Missed log
+  const handleMarkAsMissed = async (logId: string, medName: string, timeStr: string) => {
+    try {
+      const res = await fetch('/api/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ logId, status: 'missed' }),
+      })
+      if (res.ok) {
+        fetchTodayLogs()
+        triggerCaregiverEscalation(medName, timeStr)
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  // Handle Refill stock
+  const handleRefillStock = async (id: string, total: number) => {
+    try {
+      const { error } = await supabase
+        .from('medications')
+        .update({ remaining_stock: total })
+        .eq('id', id)
+      if (!error) {
+        fetchMedications()
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  // Speech Recognition (Speech-to-Text)
+  const startListening = () => {
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+      if (!SpeechRecognition) {
+        alert('Trình duyệt của bạn không hỗ trợ Nhận diện giọng nói.')
+        return
+      }
+      const recognition = new SpeechRecognition()
+      recognition.lang = 'vi-VN'
+      recognition.interimResults = false
+      recognition.maxAlternatives = 1
+
+      recognition.onstart = () => {
+        setIsListening(true)
+      }
+
+      recognition.onresult = (event: any) => {
+        const speechResult = event.results[0][0].transcript
+        setInputMessage(speechResult)
+        if (!badges.includes('Trợ lý đắc lực')) {
+          setBadges((prev) => [...prev, 'Trợ lý đắc lực'])
+        }
+      }
+
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error', event)
+        setIsListening(false)
+      }
+
+      recognition.onend = () => {
+        setIsListening(false)
+      }
+
+      recognition.start()
+    }
+  }
+
+  // Text-to-Speech (Speech Synthesis)
+  const speakText = (text: string, index: number) => {
+    if (typeof window !== 'undefined') {
+      if (isPlayingSpeech === index) {
+        window.speechSynthesis.cancel()
+        setIsPlayingSpeech(null)
+        return
+      }
+
+      window.speechSynthesis.cancel()
+      const cleanText = text.replace(/[*_#`~[\]()]/g, '')
+      const utterance = new SpeechSynthesisUtterance(cleanText)
+      utterance.lang = 'vi-VN'
+
+      const voices = window.speechSynthesis.getVoices()
+      const viVoice = voices.find((v) => v.lang.includes('vi'))
+      if (viVoice) {
+        utterance.voice = viVoice
+      }
+
+      utterance.onend = () => {
+        setIsPlayingSpeech(null)
+      }
+
+      utterance.onerror = () => {
+        setIsPlayingSpeech(null)
+      }
+
+      setIsPlayingSpeech(index)
+      window.speechSynthesis.speak(utterance)
+    }
+  }
+
+  // File Upload image change handler
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const base64String = reader.result as string
+        setSelectedImage({
+          data: base64String,
+          mimeType: file.type,
+        })
+      }
+      reader.readAsDataURL(file)
+    }
+  }
+
+  const calculateStreak = () => {
+    const takenLogsCount = logs.filter((l) => l.status === 'taken').length
+    return takenLogsCount > 0 ? 3 : 2
+  }
 
   // Warning Interaction State
   const [warningInfo, setWarningInfo] = useState<{
@@ -168,6 +338,7 @@ export default function Home() {
           dosage: newMedDosage,
           frequency: newMedFreq,
           schedule: [newMedTime],
+          total_stock: newMedStock ? parseInt(newMedStock) : null,
         }),
       })
 
@@ -297,18 +468,28 @@ export default function Home() {
   // Chat/Agent Operations
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
-    if (!inputMessage.trim() || loadingChat) return
+    if ((!inputMessage.trim() && !selectedImage) || loadingChat) return
 
     const userText = inputMessage
-    setMessages((prev) => [...prev, { role: 'user', content: userText }])
+    const imagePayload = selectedImage
+
+    const displayContent = imagePayload
+      ? `${userText} *(Đã tải ảnh lên để AI phân tích)*`
+      : userText
+
+    setMessages((prev) => [...prev, { role: 'user', content: displayContent }])
     setInputMessage('')
+    setSelectedImage(null)
     setLoadingChat(true)
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userText }),
+        body: JSON.stringify({ 
+          message: userText,
+          image: imagePayload 
+        }),
       })
 
       const data = await res.json()
@@ -349,6 +530,7 @@ export default function Home() {
           dosage: warningInfo.medication.dosage,
           frequency: warningInfo.medication.frequency,
           schedule: warningInfo.medication.schedule,
+          total_stock: (warningInfo.medication as any).total_stock || 30,
         }),
       })
 
@@ -510,7 +692,116 @@ export default function Home() {
           <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
             
             {/* Left Panel: Dashboard (50%) */}
-            <section className="flex-1 md:max-w-[50%] border-r border-slate-900 flex flex-col overflow-y-auto p-6 space-y-6">
+            <section className={`flex-1 md:max-w-[50%] border-r border-slate-900 flex flex-col overflow-y-auto p-6 space-y-6 pb-24 md:pb-6 ${activeTab === 'dashboard' ? 'flex' : 'hidden md:flex'}`}>
+              
+              {/* Streaks & Badges Dashboard Component */}
+              <div className="grid grid-cols-2 gap-4">
+                {/* Streak Card */}
+                <div className="bg-slate-900/40 border border-slate-900 rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-16 h-16 bg-orange-500/5 rounded-full blur-lg" />
+                  <div className="w-10 h-10 bg-orange-500/10 rounded-xl flex items-center justify-center text-xl">
+                    🔥
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                      Chuỗi Ngày (Streak)
+                    </div>
+                    <div className="text-xl font-black text-orange-400">
+                      {calculateStreak()} Ngày Liên Tục
+                    </div>
+                  </div>
+                </div>
+
+                {/* Badge Card */}
+                <div className="bg-slate-900/40 border border-slate-900 rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-16 h-16 bg-indigo-500/5 rounded-full blur-lg" />
+                  <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400">
+                    <Award className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                      Huy Hiệu Đạt Được
+                    </div>
+                    <div className="text-xl font-black text-indigo-300">
+                      {badges.length} / 4
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Badges List (Horizontal Scroll) */}
+              {badges.length > 0 && (
+                <div className="bg-slate-900/20 border border-slate-900/60 rounded-2xl p-4">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">
+                    Huy hiệu mở khoá
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {badges.includes('Chiến binh mới') && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 bg-teal-500/10 border border-teal-500/30 text-teal-400 rounded-lg">
+                        🛡️ Chiến binh mới
+                      </span>
+                    )}
+                    {badges.includes('Kỷ luật thép') && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-lg animate-pulse">
+                        🔥 Kỷ luật thép
+                      </span>
+                    )}
+                    {badges.includes('Tương tác an toàn') && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 rounded-lg">
+                        🔒 Tương tác an toàn
+                      </span>
+                    )}
+                    {badges.includes('Trợ lý đắc lực') && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 bg-pink-500/10 border border-pink-500/30 text-pink-400 rounded-lg">
+                        🎙️ Trợ lý đắc lực
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Caregiver Settings Card */}
+              <div className="bg-slate-900/40 border border-slate-900 rounded-2xl p-5 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-20 h-20 bg-rose-500/5 rounded-full blur-xl" />
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Bell className="w-4 h-4 text-rose-400" />
+                    <h3 className="text-sm font-bold text-slate-200">Giám Hộ & Cảnh Báo Khẩn Cấp</h3>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setShowCaregiverModal(true)}
+                    className="text-xs text-rose-400 hover:underline cursor-pointer"
+                  >
+                    Thiết lập
+                  </button>
+                </div>
+                <div className="text-xs text-slate-400 flex flex-col gap-1.5">
+                  <div className="flex justify-between">
+                    <span>Người nhận cảnh báo:</span>
+                    <span className="font-semibold text-slate-300">{caregiverName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Email liên hệ:</span>
+                    <span className="font-semibold text-slate-300">{caregiverEmail}</span>
+                  </div>
+                </div>
+
+                {caregiverAlerts.length > 0 && (
+                  <div className="mt-4 space-y-2 border-t border-slate-900 pt-3">
+                    <div className="text-[10px] text-rose-400 font-bold uppercase tracking-wider">
+                      Lịch sử gửi cảnh báo:
+                    </div>
+                    <div className="max-h-24 overflow-y-auto space-y-1.5 pr-1">
+                      {caregiverAlerts.map((alert, idx) => (
+                        <div key={idx} className="text-[10px] bg-rose-950/20 border border-rose-900/30 text-rose-300 p-2 rounded-lg leading-relaxed">
+                          {alert}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
               
               {/* Daily Checklist Tracker */}
               <div className="bg-slate-900/40 border border-slate-900 rounded-2xl p-6 relative overflow-hidden">
@@ -542,18 +833,29 @@ export default function Home() {
                     {logs.map((log) => (
                       <div
                         key={log.id}
-                        onClick={() => handleToggleLogStatus(log.id, log.status)}
-                        className={`flex items-center justify-between p-4 rounded-xl border transition-all cursor-pointer select-none ${
+                        className={`flex items-center justify-between p-4 rounded-xl border transition-all select-none ${
                           log.status === 'taken'
                             ? 'bg-emerald-950/20 border-emerald-900/50 text-emerald-300'
+                            : log.status === 'missed'
+                            ? 'bg-rose-950/15 border-rose-900/30 text-rose-300 animate-pulse'
                             : 'bg-slate-950/50 border-slate-900 hover:border-slate-800 text-slate-300'
                         }`}
                       >
                         <div className="flex items-center gap-3">
                           <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-                            log.status === 'taken' ? 'bg-emerald-500 text-slate-950' : 'bg-slate-900 text-slate-400'
+                            log.status === 'taken' 
+                              ? 'bg-emerald-500 text-slate-950' 
+                              : log.status === 'missed' 
+                              ? 'bg-rose-500 text-slate-950' 
+                              : 'bg-slate-900 text-slate-400'
                           }`}>
-                            {log.status === 'taken' ? <Check className="w-4 h-4 stroke-[3px]" /> : <Clock className="w-4 h-4" />}
+                            {log.status === 'taken' ? (
+                              <Check className="w-4 h-4 stroke-[3px]" />
+                            ) : log.status === 'missed' ? (
+                              <X className="w-4 h-4 stroke-[3px]" />
+                            ) : (
+                              <Clock className="w-4 h-4" />
+                            )}
                           </div>
                           <div>
                             <div className="font-bold text-sm">
@@ -570,13 +872,38 @@ export default function Home() {
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <span className={`text-[10px] px-2 py-0.5 font-bold uppercase rounded-md tracking-wider ${
-                            log.status === 'taken'
-                              ? 'bg-emerald-400/10 text-emerald-400'
-                              : 'bg-slate-800 text-slate-500'
-                          }`}>
-                            {log.status === 'taken' ? 'Đã uống' : 'Chưa uống'}
-                          </span>
+                          {log.status === 'scheduled' ? (
+                            <>
+                              <button
+                                onClick={() => handleToggleLogStatus(log.id, 'scheduled')}
+                                className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                              >
+                                Uống
+                              </button>
+                              <button
+                                onClick={() => handleMarkAsMissed(
+                                  log.id, 
+                                  log.medication?.name || 'Thuốc', 
+                                  new Date(log.scheduled_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+                                )}
+                                className="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500 hover:text-slate-950 text-rose-400 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                              >
+                                Bỏ qua
+                              </button>
+                            </>
+                          ) : (
+                            <span 
+                              onClick={() => handleToggleLogStatus(log.id, 'taken')}
+                              className={`text-[10px] px-2 py-1 font-bold uppercase rounded-md tracking-wider cursor-pointer hover:opacity-80 transition-opacity ${
+                                log.status === 'taken'
+                                  ? 'bg-emerald-400/10 text-emerald-400'
+                                  : 'bg-rose-400/10 text-rose-400'
+                              }`}
+                              title="Nhấp để chuyển lại lịch"
+                            >
+                              {log.status === 'taken' ? 'Đã uống' : 'Bỏ qua/Trễ'}
+                            </span>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -641,6 +968,35 @@ export default function Home() {
                                 </span>
                               ))}
                             </div>
+
+                            {/* Stock Indicator */}
+                            {med.total_stock !== undefined && med.total_stock !== null && (
+                              <div className="mt-2.5 space-y-1">
+                                <div className="flex items-center justify-between text-[10px] text-slate-400">
+                                  <span>Tồn kho: <strong className={med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 ? "text-rose-400 font-bold" : "text-slate-300"}>
+                                    {med.remaining_stock} / {med.total_stock}
+                                  </strong></span>
+                                  {med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 && (
+                                    <span className="text-rose-400 font-bold animate-pulse">⚠️ Sắp hết!</span>
+                                  )}
+                                </div>
+                                <div className="w-32 h-1 bg-slate-900 rounded-full overflow-hidden flex">
+                                  <div 
+                                    className={`h-full rounded-full transition-all ${
+                                      med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 ? "bg-rose-500 animate-pulse" : "bg-teal-500"
+                                    }`}
+                                    style={{ width: `${((med.remaining_stock ?? 0) / (med.total_stock ?? 1)) * 100}%` }}
+                                  />
+                                </div>
+                                <button 
+                                  type="button"
+                                  onClick={() => handleRefillStock(med.id, med.total_stock ?? 30)}
+                                  className="text-[9px] text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-0.5 mt-1 cursor-pointer"
+                                >
+                                  🔄 Nạp thêm thuốc
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -660,7 +1016,7 @@ export default function Home() {
             </section>
 
             {/* Right Panel: Chat Interface (50%) */}
-            <section className="flex-1 md:max-w-[50%] flex flex-col bg-slate-950/40 overflow-hidden relative">
+            <section className={`flex-1 md:max-w-[50%] flex flex-col bg-slate-950/40 overflow-hidden relative pb-20 md:pb-0 ${activeTab === 'chat' ? 'flex' : 'hidden md:flex'}`}>
               
               {/* Chat Title / Agent Indicator */}
               <div className="px-6 py-4 border-b border-slate-900 flex items-center justify-between bg-slate-950/20">
@@ -682,7 +1038,7 @@ export default function Home() {
                     className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-md ${
+                      className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-md relative group/msg ${
                         msg.role === 'user'
                           ? 'bg-indigo-600 text-slate-50'
                           : msg.role === 'system'
@@ -691,9 +1047,23 @@ export default function Home() {
                       }`}
                     >
                       {/* Handle markdown formatting manually/safely for code-blocks or bolding */}
-                      <p className="whitespace-pre-line">
+                      <p className="whitespace-pre-line pr-5">
                         {msg.content}
                       </p>
+                      {msg.role === 'model' && (
+                        <button
+                          type="button"
+                          onClick={() => speakText(msg.content, index)}
+                          className={`absolute bottom-2 right-2 p-1 rounded-md transition-colors ${
+                            isPlayingSpeech === index 
+                              ? 'bg-teal-500 text-slate-950' 
+                              : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
+                          }`}
+                          title="Đọc câu trả lời"
+                        >
+                          <Volume2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -745,20 +1115,75 @@ export default function Home() {
                 </div>
               )}
 
+              {/* Image Preview Thumbnail */}
+              {selectedImage && (
+                <div className="px-4 py-2 border-t border-slate-900 bg-slate-900/20 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <img 
+                      src={selectedImage.data} 
+                      alt="Đơn thuốc" 
+                      className="w-10 h-10 object-cover rounded-lg border border-slate-800"
+                    />
+                    <span className="text-xs text-slate-400">Đã chọn ảnh đơn thuốc</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedImage(null)}
+                    className="p-1 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 rounded-md"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               {/* Chat Input Box */}
-              <form onSubmit={handleSendMessage} className="p-4 border-t border-slate-900 flex gap-2">
+              <form onSubmit={handleSendMessage} className="p-4 border-t border-slate-900 flex gap-2 items-center">
+                <input
+                  type="file"
+                  ref={imageInputRef}
+                  onChange={handleImageChange}
+                  accept="image/*"
+                  className="hidden"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  className={`p-3 rounded-xl border transition-all flex items-center justify-center cursor-pointer ${
+                    selectedImage 
+                      ? 'bg-indigo-500/20 border-indigo-500/30 text-indigo-400' 
+                      : 'bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Tải ảnh đơn thuốc/vỏ hộp"
+                >
+                  <Camera className="w-5 h-5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={startListening}
+                  className={`p-3 rounded-xl border transition-all flex items-center justify-center cursor-pointer ${
+                    isListening 
+                      ? 'bg-rose-500/20 border-rose-500/30 text-rose-400 animate-pulse' 
+                      : 'bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Nói để nhập lịch thuốc"
+                >
+                  <Mic className="w-5 h-5" />
+                </button>
+
                 <input
                   type="text"
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
-                  placeholder="Nhập lịch uống thuốc mới hoặc báo đã uống thuốc..."
+                  placeholder={isListening ? "Đang nghe giọng nói của bạn..." : "Nhập lịch uống hoặc gửi ảnh đơn thuốc..."}
                   className="flex-grow bg-slate-900/50 border border-slate-900 focus:border-teal-500 rounded-xl px-4 py-3 text-sm focus:outline-none transition-colors"
                   disabled={loadingChat}
                 />
                 
                 <button
                   type="submit"
-                  disabled={loadingChat || !inputMessage.trim()}
+                  disabled={loadingChat || (!inputMessage.trim() && !selectedImage)}
                   className="p-3 bg-gradient-to-r from-teal-400 to-teal-500 hover:from-teal-500 hover:to-teal-600 disabled:from-slate-900 disabled:to-slate-900 disabled:text-slate-600 text-slate-950 rounded-xl transition-all shadow-md shadow-teal-500/5 flex items-center justify-center cursor-pointer"
                 >
                   <Send className="w-5 h-5" />
@@ -768,6 +1193,34 @@ export default function Home() {
             </section>
 
           </main>
+
+          {/* Mobile Bottom Navigation Bar */}
+          <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-slate-900 border-t border-slate-800 flex items-center justify-around z-30 px-6 backdrop-blur-md bg-slate-900/90">
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={`flex flex-col items-center justify-center gap-1 transition-colors ${
+                activeTab === 'dashboard' ? 'text-teal-400 font-bold' : 'text-slate-400 hover:text-slate-300'
+              }`}
+            >
+              <Activity className="w-5 h-5" />
+              <span className="text-[10px]">Kiểm soát</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('chat')}
+              className={`flex flex-col items-center justify-center gap-1 transition-colors ${
+                activeTab === 'chat' ? 'text-teal-400 font-bold' : 'text-slate-400 hover:text-slate-300'
+              }`}
+            >
+              <div className="relative">
+                <MessageSquare className="w-5 h-5" />
+                <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                </span>
+              </div>
+              <span className="text-[10px]">Trợ lý AI</span>
+            </button>
+          </div>
 
           {/* Manual Add Medication Modal */}
           {showAddModal && (
@@ -829,19 +1282,34 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                      Tần suất
-                    </label>
-                    <select
-                      value={newMedFreq}
-                      onChange={(e) => setNewMedFreq(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 text-slate-300"
-                    >
-                      <option value="Hàng ngày">Hàng ngày (Daily)</option>
-                      <option value="Cách ngày">Cách ngày</option>
-                      <option value="Hàng tuần">Hàng tuần</option>
-                    </select>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Tần suất
+                      </label>
+                      <select
+                        value={newMedFreq}
+                        onChange={(e) => setNewMedFreq(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 text-slate-300"
+                      >
+                        <option value="Hàng ngày">Hàng ngày (Daily)</option>
+                        <option value="Cách ngày">Cách ngày</option>
+                        <option value="Hàng tuần">Hàng tuần</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Số lượng thuốc (Tồn kho)
+                      </label>
+                      <input
+                        type="number"
+                        value={newMedStock}
+                        onChange={(e) => setNewMedStock(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
+                        placeholder="Mặc định: 30"
+                        min="1"
+                      />
+                    </div>
                   </div>
 
                   <button
@@ -851,6 +1319,65 @@ export default function Home() {
                     Thêm Lịch Trình
                   </button>
                 </form>
+              </div>
+            </div>
+          )}
+
+          {/* Caregiver Settings Modal */}
+          {showCaregiverModal && (
+            <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative">
+                
+                <button
+                  type="button"
+                  onClick={() => setShowCaregiverModal(false)}
+                  className="absolute top-4 right-4 text-slate-400 hover:text-slate-200"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-rose-400">
+                  <Bell className="w-5 h-5 text-rose-400" />
+                  Cấu Hình Người Bảo Hộ (Caregiver)
+                </h3>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                      Tên người bảo hộ
+                    </label>
+                    <input
+                      type="text"
+                      value={caregiverName}
+                      onChange={(e) => setCaregiverName(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-rose-500"
+                      placeholder="Ví dụ: Mẹ, Bố, Bác sĩ"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                      Email nhận cảnh báo trễ thuốc
+                    </label>
+                    <input
+                      type="email"
+                      value={caregiverEmail}
+                      onChange={(e) => setCaregiverEmail(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-rose-500"
+                      placeholder="name@domain.com"
+                      required
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowCaregiverModal(false)}
+                    className="w-full bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-slate-955 font-bold py-3 rounded-xl transition-all shadow-lg text-sm"
+                  >
+                    Lưu Cấu Hình
+                  </button>
+                </div>
               </div>
             </div>
           )}

@@ -7,6 +7,8 @@ export interface Medication {
   dosage: string
   frequency: string
   schedule: string[] // e.g. ["08:00", "20:00"]
+  total_stock?: number | null
+  remaining_stock?: number | null
   created_at: string
   updated_at: string
 }
@@ -42,6 +44,8 @@ export async function addMedication(medication: {
   dosage: string
   frequency: string
   schedule: string[]
+  total_stock?: number | null
+  remaining_stock?: number | null
 }): Promise<Medication | null> {
   const supabase = await createClient()
   const { data, error } = await supabase
@@ -207,4 +211,26 @@ async function generateDailyLogsForMedication(med: Medication): Promise<void> {
       console.error('Error generating logs for new medication:', error)
     }
   }
+}
+
+export async function updateMedicationStock(
+  id: string,
+  totalStock: number,
+  remainingStock: number
+): Promise<boolean> {
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from('medications')
+    .update({
+      total_stock: totalStock,
+      remaining_stock: remainingStock,
+    })
+    .eq('id', id)
+
+  if (error) {
+    console.error('Error updating medication stock:', error)
+    return false
+  }
+
+  return true
 }

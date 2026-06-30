@@ -19,11 +19,13 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { message } = body
+    const { message = '', image } = body
 
-    if (!message) {
-      return NextResponse.json({ error: 'Tin nhắn không được để trống.' }, { status: 400 })
+    if (!message && !image) {
+      return NextResponse.json({ error: 'Tin nhắn hoặc hình ảnh không được để trống.' }, { status: 400 })
     }
+
+    const activeMessage = message || 'Hãy phân tích hình ảnh đơn thuốc hoặc vỏ hộp thuốc này để thêm vào lịch uống thuốc của tôi.'
 
     // 2. Initialize Google Gen AI
     const apiKey = process.env.GEMINI_API_KEY
@@ -54,10 +56,12 @@ export async function POST(request: Request) {
     // 4. Run Intake Agent using Structured Outputs to understand user intent
     const intakeSystemInstruction = `
 Bạn là Intake Agent của ứng dụng MediMate AI - trợ lý quản lý lịch uống thuốc cá nhân.
-Nhiệm vụ của bạn là phân tích tin nhắn của người dùng bằng tiếng Việt và phân loại thành các hành động:
-- "ADD_MEDICATION": Khi người dùng muốn thêm một loại thuốc mới vào lịch trình. Bạn cần trích xuất tên thuốc, liều lượng, tần suất và danh sách các giờ uống thuốc (định dạng HH:MM).
-- "LOG_TAKEN": Khi người dùng báo rằng họ đã uống thuốc (ví dụ: "tớ đã uống aspirin rồi", "đã dùng thuốc huyết áp"). Bạn cần trích xuất tên thuốc đã uống.
-- "GENERAL_CHAT": Khi người dùng trò chuyện chung, hỏi đáp về sức khỏe hoặc hỏi thông tin khác.
+Nhiệm vụ của bạn là phân tích tin nhắn hoặc hình ảnh đơn thuốc/hộp thuốc của người dùng bằng tiếng Việt và phân loại thành các hành động:
+- "ADD_MEDICATION": Khi người dùng muốn thêm thuốc mới. Bạn cần trích xuất tên thuốc, liều lượng, tần suất, danh sách các giờ uống thuốc (định dạng HH:MM) và tổng số lượng tồn kho (total_stock) nếu có hiển thị trong tin nhắn hoặc hình ảnh (ví dụ: "30 viên", "SL: 20", "Qty: 100").
+- "LOG_TAKEN": Khi người dùng báo đã uống thuốc (ví dụ: "tớ đã uống aspirin rồi"). Bạn cần trích xuất tên thuốc.
+- "GENERAL_CHAT": Khi người dùng trò chuyện chung, hỏi đáp về sức khỏe hoặc tư vấn y tế nhẹ nhàng.
+
+Nếu người dùng gửi kèm hình ảnh đơn thuốc hoặc vỏ hộp thuốc, hãy tự động nhận diện và trích xuất thông tin thuốc từ hình ảnh đó để thêm vào lịch uống (ADD_MEDICATION).
 
 Danh sách các thuốc hiện tại của người dùng:
 ${medContext || 'Chưa có thuốc nào.'}
@@ -77,7 +81,7 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
         action: {
           type: 'STRING',
           enum: ['ADD_MEDICATION', 'LOG_TAKEN', 'GENERAL_CHAT'],
-          description: 'Hành động được xác định từ tin nhắn người dùng.',
+          description: 'Hành động được xác định từ tin nhắn hoặc hình ảnh đơn thuốc.',
         },
         medication_details: {
           type: 'OBJECT',
@@ -90,9 +94,13 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
               items: { type: 'STRING' },
               description: 'Mảng chứa các giờ uống thuốc ở định dạng HH:MM, ví dụ: ["08:00", "20:00"]',
             },
+            total_stock: {
+              type: 'INTEGER',
+              description: 'Tổng số lượng thuốc được cấp/mua nếu có ghi trong đơn hoặc tin nhắn, ví dụ: 30, 60. Nếu không có hãy để trống hoặc trả về null.',
+            },
           },
           required: ['name', 'dosage', 'frequency', 'schedule'],
-          description: 'Chi tiết thuốc nếu hành động là ADD_MEDICATION. Bắt buộc có nếu hành động là ADD_MEDICATION.',
+          description: 'Chi tiết thuốc nếu hành động là ADD_MEDICATION.',
         },
         log_details: {
           type: 'OBJECT',
@@ -110,9 +118,24 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
       required: ['action', 'general_response'],
     }
 
+    // Process image base64 if provided
+    let contentParts: any[] = [activeMessage]
+    if (image && image.data && image.mimeType) {
+      let base64Data = image.data
+      if (base64Data.includes(';base64,')) {
+        base64Data = base64Data.split(';base64,')[1]
+      }
+      contentParts.push({
+        inlineData: {
+          data: base64Data,
+          mimeType: image.mimeType,
+        },
+      })
+    }
+
     const response = await ai.models.generateContent({
       model: 'gemini-3.1-flash-lite',
-      contents: message,
+      contents: contentParts,
       config: {
         systemInstruction: intakeSystemInstruction,
         responseMimeType: 'application/json',
@@ -211,6 +234,8 @@ Hãy trả về phản hồi JSON theo định dạng sau:
         dosage: newMed.dosage,
         frequency: newMed.frequency,
         schedule: newMed.schedule,
+        total_stock: newMed.total_stock || null,
+        remaining_stock: newMed.total_stock || null,
       })
 
       if (savedMed) {

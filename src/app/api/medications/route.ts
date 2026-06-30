@@ -28,13 +28,20 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { name, dosage, frequency, schedule } = body
+    const { name, dosage, frequency, schedule, total_stock } = body
 
     if (!name || !dosage || !frequency || !schedule) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
-    const saved = await addMedication({ name, dosage, frequency, schedule })
+    const saved = await addMedication({
+      name,
+      dosage,
+      frequency,
+      schedule,
+      total_stock: total_stock || null,
+      remaining_stock: total_stock || null,
+    })
     if (!saved) {
       return NextResponse.json({ error: 'Failed to save medication' }, { status: 500 })
     }
