@@ -24,7 +24,8 @@ import {
   Volume2,
   Award,
   Bell,
-  FileText
+  FileText,
+  Pencil
 } from 'lucide-react'
 
 // Interfaces
@@ -37,6 +38,7 @@ interface Medication {
   schedule: string[]
   total_stock?: number | null
   remaining_stock?: number | null
+  dosage_quantity?: number | null
   created_at: string
 }
 
@@ -88,6 +90,18 @@ export default function Home() {
   const [newMedFreq, setNewMedFreq] = useState('Hàng ngày')
   const [newMedTime, setNewMedTime] = useState('08:00')
   const [newMedStock, setNewMedStock] = useState('30')
+  const [newMedDosageQty, setNewMedDosageQty] = useState('1')
+
+  // Edit Medication Modal States
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editingMedication, setEditingMedication] = useState<Medication | null>(null)
+  const [editMedName, setEditMedName] = useState('')
+  const [editMedDosage, setEditMedDosage] = useState('')
+  const [editMedFreq, setEditMedFreq] = useState('Hàng ngày')
+  const [editMedTime, setEditMedTime] = useState('08:00')
+  const [editMedStock, setEditMedStock] = useState('30')
+  const [editMedRemainingStock, setEditMedRemainingStock] = useState('30')
+  const [editMedDosageQty, setEditMedDosageQty] = useState('1')
 
   // UI & Feature States
   const [activeTab, setActiveTab] = useState<'dashboard' | 'chat'>('dashboard')
@@ -339,6 +353,7 @@ export default function Home() {
           frequency: newMedFreq,
           schedule: [newMedTime],
           total_stock: newMedStock ? parseInt(newMedStock) : null,
+          dosage_quantity: newMedDosageQty ? parseInt(newMedDosageQty) : 1,
         }),
       })
 
@@ -346,6 +361,7 @@ export default function Home() {
         setShowAddModal(false)
         setNewMedName('')
         setNewMedDosage('')
+        setNewMedDosageQty('1')
         fetchMedications()
         fetchTodayLogs()
         
@@ -355,6 +371,60 @@ export default function Home() {
           {
             role: 'model',
             content: `✅ Đã thêm thuốc **${newMedName}** vào lịch trình của bạn thành công (uống lúc ${newMedTime}).`,
+          },
+        ])
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoadingMeds(false)
+    }
+  }
+
+  const handleEditMedicationClick = (med: Medication) => {
+    setEditingMedication(med)
+    setEditMedName(med.name)
+    setEditMedDosage(med.dosage)
+    setEditMedFreq(med.frequency)
+    setEditMedTime(med.schedule[0] || '08:00')
+    setEditMedStock(med.total_stock?.toString() || '30')
+    setEditMedRemainingStock(med.remaining_stock?.toString() || '30')
+    setEditMedDosageQty(med.dosage_quantity?.toString() || '1')
+    setShowEditModal(true)
+  }
+
+  const handleSaveEditMedication = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingMedication || !editMedName || !editMedDosage) return
+
+    setLoadingMeds(true)
+    try {
+      const res = await fetch('/api/medications', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingMedication.id,
+          name: editMedName,
+          dosage: editMedDosage,
+          frequency: editMedFreq,
+          schedule: [editMedTime],
+          total_stock: editMedStock ? parseInt(editMedStock) : null,
+          remaining_stock: editMedRemainingStock ? parseInt(editMedRemainingStock) : null,
+          dosage_quantity: editMedDosageQty ? parseInt(editMedDosageQty) : 1,
+        }),
+      })
+
+      if (res.ok) {
+        setShowEditModal(false)
+        setEditingMedication(null)
+        fetchMedications()
+        fetchTodayLogs()
+        
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'model',
+            content: `ℹ️ Đã cập nhật thông tin thuốc **${editMedName}** thành công.`,
           },
         ])
       }
@@ -948,8 +1018,13 @@ export default function Home() {
                           </div>
                           <div>
                             <div className="font-bold text-sm text-slate-200">{med.name}</div>
-                            <div className="text-xs text-slate-400 mt-0.5">
-                              {med.dosage} • {med.frequency}
+                            <div className="text-xs text-slate-400 mt-0.5 flex flex-wrap gap-x-2">
+                              <span>{med.dosage} • {med.frequency}</span>
+                              {med.dosage_quantity && med.dosage_quantity >= 1 && (
+                                <span className="text-teal-400 font-medium">
+                                  (Mỗi lần: {med.dosage_quantity} viên)
+                                </span>
+                              )}
                             </div>
                             <div className="flex gap-1.5 mt-1.5">
                               {med.schedule.map((time, idx) => (
@@ -993,13 +1068,22 @@ export default function Home() {
                           </div>
                         </div>
 
-                        <button
-                          onClick={() => handleDeleteMedication(med.id)}
-                          className="p-2 text-slate-600 hover:text-rose-400 hover:bg-slate-900 rounded-lg transition-colors cursor-pointer"
-                          title="Xoá lịch thuốc"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={() => handleEditMedicationClick(med)}
+                            className="p-2 text-slate-600 hover:text-indigo-400 hover:bg-slate-900 rounded-lg transition-colors cursor-pointer"
+                            title="Sửa lịch thuốc"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteMedication(med.id)}
+                            className="p-2 text-slate-600 hover:text-rose-400 hover:bg-slate-900 rounded-lg transition-colors cursor-pointer"
+                            title="Xoá lịch thuốc"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1305,11 +1389,157 @@ export default function Home() {
                     </div>
                   </div>
 
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                      Số viên/đơn vị uống mỗi lần
+                    </label>
+                    <input
+                      type="number"
+                      value={newMedDosageQty}
+                      onChange={(e) => setNewMedDosageQty(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
+                      placeholder="Mặc định: 1"
+                      min="1"
+                    />
+                  </div>
+
                   <button
                     type="submit"
                     className="w-full bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-slate-900 font-bold py-3 rounded-xl transition-all shadow-lg text-sm"
                   >
                     Thêm Lịch Trình
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Edit Medication Modal */}
+          {showEditModal && editingMedication && (
+            <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative">
+                
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditModal(false)
+                    setEditingMedication(null)
+                  }}
+                  className="absolute top-4 right-4 text-slate-400 hover:text-slate-200"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <Pencil className="w-5 h-5 text-indigo-400" />
+                  Chỉnh Sửa Lịch Uống Thuốc
+                </h3>
+
+                <form onSubmit={handleSaveEditMedication} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                      Tên thuốc
+                    </label>
+                    <input
+                      type="text"
+                      value={editMedName}
+                      onChange={(e) => setEditMedName(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Liều lượng
+                      </label>
+                      <input
+                        type="text"
+                        value={editMedDosage}
+                        onChange={(e) => setEditMedDosage(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Giờ uống thuốc
+                      </label>
+                      <input
+                        type="time"
+                        value={editMedTime}
+                        onChange={(e) => setEditMedTime(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Tần suất
+                      </label>
+                      <select
+                        value={editMedFreq}
+                        onChange={(e) => setEditMedFreq(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 text-slate-300"
+                      >
+                        <option value="Hàng ngày">Hàng ngày (Daily)</option>
+                        <option value="Cách ngày">Cách ngày</option>
+                        <option value="Hàng tuần">Hàng tuần</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Số viên uống mỗi lần
+                      </label>
+                      <input
+                        type="number"
+                        value={editMedDosageQty}
+                        onChange={(e) => setEditMedDosageQty(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
+                        min="1"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Tổng kho ban đầu
+                      </label>
+                      <input
+                        type="number"
+                        value={editMedStock}
+                        onChange={(e) => setEditMedStock(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
+                        min="1"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Tồn kho còn lại
+                      </label>
+                      <input
+                        type="number"
+                        value={editMedRemainingStock}
+                        onChange={(e) => setEditMedRemainingStock(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
+                        min="0"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-slate-900 font-bold py-3 rounded-xl transition-all shadow-lg text-sm"
+                  >
+                    Lưu Thay Đổi
                   </button>
                 </form>
               </div>

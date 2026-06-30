@@ -57,7 +57,7 @@ export async function POST(request: Request) {
     const intakeSystemInstruction = `
 Bạn là Intake Agent của ứng dụng MediMate AI - trợ lý quản lý lịch uống thuốc cá nhân.
 Nhiệm vụ của bạn là phân tích tin nhắn hoặc hình ảnh đơn thuốc/hộp thuốc của người dùng bằng tiếng Việt và phân loại thành các hành động:
-- "ADD_MEDICATION": Khi người dùng muốn thêm thuốc mới. Bạn cần trích xuất tên thuốc, liều lượng, tần suất, danh sách các giờ uống thuốc (định dạng HH:MM) và tổng số lượng tồn kho (total_stock) nếu có hiển thị trong tin nhắn hoặc hình ảnh (ví dụ: "30 viên", "SL: 20", "Qty: 100").
+- "ADD_MEDICATION": Khi người dùng muốn thêm thuốc mới. Bạn cần trích xuất tên thuốc, liều lượng, tần suất, danh sách các giờ uống thuốc (định dạng HH:MM), tổng số lượng tồn kho (total_stock) nếu có (ví dụ: "30 viên") và số viên/đơn vị uống mỗi lần (dosage_quantity, ví dụ: "mỗi lần uống 2 viên" -> 2. Mặc định là 1).
 - "LOG_TAKEN": Khi người dùng báo đã uống thuốc (ví dụ: "tớ đã uống aspirin rồi"). Bạn cần trích xuất tên thuốc.
 - "GENERAL_CHAT": Khi người dùng trò chuyện chung, hỏi đáp về sức khỏe hoặc tư vấn y tế nhẹ nhàng.
 
@@ -97,6 +97,10 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
             total_stock: {
               type: 'INTEGER',
               description: 'Tổng số lượng thuốc được cấp/mua nếu có ghi trong đơn hoặc tin nhắn, ví dụ: 30, 60. Nếu không có hãy để trống hoặc trả về null.',
+            },
+            dosage_quantity: {
+              type: 'INTEGER',
+              description: 'Số lượng viên thuốc hoặc đơn vị uống của loại thuốc này trong mỗi lần uống. Trích xuất từ hướng dẫn uống, ví dụ: "mỗi lần uống 2 viên" -> 2. Mặc định là 1.',
             },
           },
           required: ['name', 'dosage', 'frequency', 'schedule'],
@@ -236,6 +240,7 @@ Hãy trả về phản hồi JSON theo định dạng sau:
         schedule: newMed.schedule,
         total_stock: newMed.total_stock || null,
         remaining_stock: newMed.total_stock || null,
+        dosage_quantity: newMed.dosage_quantity || 1,
       })
 
       if (savedMed) {
