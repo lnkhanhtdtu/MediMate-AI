@@ -433,21 +433,14 @@ export default function Home() {
     const demoPassword = 'demomedimate123'
 
     try {
-      // Try login first
-      const { data, error } = await supabase.auth.signInWithPassword({
+      // Try sign up first to avoid console network errors on clean database
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email: demoEmail,
         password: demoPassword,
       })
 
-      if (error) {
-        // If user doesn't exist, sign up then login
-        const { error: signUpError } = await supabase.auth.signUp({
-          email: demoEmail,
-          password: demoPassword,
-        })
-        if (signUpError) throw signUpError
-
-        // Sign in after sign up
+      // If sign up fails or returns no session (e.g. user already exists), do sign in
+      if (signUpError || !signUpData.session) {
         const { error: signInError } = await supabase.auth.signInWithPassword({
           email: demoEmail,
           password: demoPassword,
