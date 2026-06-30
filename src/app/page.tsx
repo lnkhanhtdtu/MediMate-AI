@@ -355,8 +355,8 @@ export default function Home() {
           dosage: newMedDosage,
           frequency: newMedFreq,
           schedule: [newMedTime],
-          total_stock: newMedStock ? parseInt(newMedStock) : null,
-          dosage_quantity: newMedDosageQty ? parseInt(newMedDosageQty) : 1,
+          total_stock: newMedStock ? parseFloat(newMedStock) : null,
+          dosage_quantity: newMedDosageQty ? parseFloat(newMedDosageQty) : 1,
           prescription_name: newMedPrescriptionName || null,
         }),
       })
@@ -414,9 +414,9 @@ export default function Home() {
           dosage: editMedDosage,
           frequency: editMedFreq,
           schedule: [editMedTime],
-          total_stock: editMedStock ? parseInt(editMedStock) : null,
-          remaining_stock: editMedRemainingStock ? parseInt(editMedRemainingStock) : null,
-          dosage_quantity: editMedDosageQty ? parseInt(editMedDosageQty) : 1,
+          total_stock: editMedStock ? parseFloat(editMedStock) : null,
+          remaining_stock: editMedRemainingStock ? parseFloat(editMedRemainingStock) : null,
+          dosage_quantity: editMedDosageQty ? parseFloat(editMedDosageQty) : 1,
           prescription_name: editMedPrescriptionName || null,
         }),
       })
@@ -941,89 +941,114 @@ export default function Home() {
                     Chưa có lịch trình thuốc nào cho hôm nay.
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-4 max-h-[400px] overflow-y-auto pr-1">
                     {(() => {
-                      const grouped: Record<string, typeof logs> = {}
+                      // 1. Group logs by prescription name
+                      const groupedByPrescription: Record<string, typeof logs> = {}
                       logs.forEach(log => {
-                        const timeKey = new Date(log.scheduled_time).toLocaleTimeString('vi-VN', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                        if (!grouped[timeKey]) grouped[timeKey] = []
-                        grouped[timeKey].push(log)
+                        const prescriptionKey = log.medication?.prescription_name || 'Thuốc lẻ / Tự thêm'
+                        if (!groupedByPrescription[prescriptionKey]) groupedByPrescription[prescriptionKey] = []
+                        groupedByPrescription[prescriptionKey].push(log)
                       })
 
-                      return Object.entries(grouped).map(([timeSlot, slotLogs]) => {
-                        const hasScheduled = slotLogs.some(l => l.status === 'scheduled')
-                        const allTaken = slotLogs.every(l => l.status === 'taken')
+                      return Object.entries(groupedByPrescription).map(([prescriptionName, prescriptionLogs]) => {
+                        // 2. Within this prescription, group logs by scheduled time (HH:MM)
+                        const groupedByTime: Record<string, typeof logs> = {}
+                        prescriptionLogs.forEach(log => {
+                          const timeKey = new Date(log.scheduled_time).toLocaleTimeString('vi-VN', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                          if (!groupedByTime[timeKey]) groupedByTime[timeKey] = []
+                          groupedByTime[timeKey].push(log)
+                        })
 
                         return (
-                          <div key={timeSlot} className="p-4 bg-slate-950/30 border border-slate-900/60 rounded-2xl space-y-3 relative overflow-hidden">
-                            <div className="absolute top-0 left-0 w-1 h-full bg-teal-500/20" />
-                            <div className="flex items-center justify-between pb-2 border-b border-slate-900/40">
-                              <div className="flex items-center gap-1.5">
-                                <Clock className="w-4 h-4 text-teal-400" />
-                                <span className="font-bold text-sm text-slate-200">{timeSlot}</span>
-                              </div>
-
-                              <div className="flex gap-1.5">
-                                {hasScheduled && (
-                                  <>
-                                    <button
-                                      onClick={() => handleBatchTakeAll(slotLogs.filter(l => l.status === 'scheduled'))}
-                                      className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
-                                    >
-                                      Uống tất cả
-                                    </button>
-                                    <button
-                                      onClick={() => handleBatchMissAll(slotLogs.filter(l => l.status === 'scheduled'))}
-                                      className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500 hover:text-slate-950 text-rose-400 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
-                                    >
-                                      Bỏ qua
-                                    </button>
-                                  </>
-                                )}
-                                {!hasScheduled && (
-                                  <span className={`text-[9px] px-2 py-0.5 font-bold uppercase rounded-md tracking-wider ${
-                                    allTaken ? 'bg-emerald-400/10 text-emerald-400' : 'bg-rose-400/10 text-rose-400'
-                                  }`}>
-                                    {allTaken ? 'Đã uống xong' : 'Đã bỏ qua'}
-                                  </span>
-                                )}
-                              </div>
+                          <div key={prescriptionName} className="space-y-3 bg-slate-900/20 border border-slate-900/60 rounded-2xl p-4 relative overflow-hidden">
+                            {/* Prescription Header */}
+                            <div className="flex items-center gap-2 pb-2 border-b border-slate-900/40">
+                              <FileText className="w-4 h-4 text-indigo-400" />
+                              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                                {prescriptionName}
+                              </span>
                             </div>
 
-                            <div className="space-y-2">
-                              {slotLogs.map(log => (
-                                <div key={log.id} className="flex items-center justify-between py-1 pl-1">
-                                  <div className="flex items-center gap-2">
-                                    <div className={`w-2 h-2 rounded-full ${
-                                      log.status === 'taken' ? 'bg-emerald-500' : log.status === 'missed' ? 'bg-rose-500 animate-pulse' : 'bg-slate-700'
-                                    }`} />
-                                    <span className={`text-xs font-semibold ${log.status === 'taken' ? 'line-through text-slate-500' : 'text-slate-300'}`}>
-                                      {log.medication?.name} - {log.medication?.dosage}
-                                    </span>
-                                    {log.medication?.dosage_quantity && log.medication.dosage_quantity >= 1 && (
-                                      <span className="text-[10px] text-teal-400 font-semibold bg-teal-500/10 border border-teal-500/20 px-1.5 py-0.5 rounded">
-                                        {log.medication.dosage_quantity} viên
-                                      </span>
-                                    )}
-                                  </div>
+                            {/* Time Slots in this Prescription */}
+                            <div className="space-y-3">
+                              {Object.entries(groupedByTime).map(([timeSlot, slotLogs]) => {
+                                const hasScheduled = slotLogs.some(l => l.status === 'scheduled')
+                                const allTaken = slotLogs.every(l => l.status === 'taken')
 
-                                  <span
-                                    onClick={() => handleToggleLogStatus(log.id, log.status)}
-                                    className={`text-[9px] px-1.5 py-0.5 rounded cursor-pointer select-none transition-all font-bold border ${
-                                      log.status === 'taken'
-                                        ? 'bg-emerald-950/20 border-emerald-900/40 text-emerald-400 hover:bg-emerald-900/20'
-                                        : log.status === 'missed'
-                                        ? 'bg-rose-950/25 border-rose-900/30 text-rose-400 hover:bg-rose-900/20'
-                                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800'
-                                    }`}
-                                  >
-                                    {log.status === 'taken' ? 'Đã uống' : log.status === 'missed' ? 'Bỏ qua' : 'Chưa uống'}
-                                  </span>
-                                </div>
-                              ))}
+                                return (
+                                  <div key={timeSlot} className="p-3 bg-slate-950/40 border border-slate-900/60 rounded-xl space-y-2">
+                                    <div className="flex items-center justify-between pb-1.5 border-b border-slate-900/40">
+                                      <div className="flex items-center gap-1.5">
+                                        <Clock className="w-3.5 h-3.5 text-teal-400" />
+                                        <span className="font-bold text-xs text-slate-300">{timeSlot}</span>
+                                      </div>
+
+                                      <div className="flex gap-1.5">
+                                        {hasScheduled && (
+                                          <>
+                                            <button
+                                              onClick={() => handleBatchTakeAll(slotLogs.filter(l => l.status === 'scheduled'))}
+                                              className="px-2 py-0.5 bg-emerald-500/10 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 rounded text-[9px] font-bold transition-all cursor-pointer"
+                                            >
+                                              Uống cả nhóm
+                                            </button>
+                                            <button
+                                              onClick={() => handleBatchMissAll(slotLogs.filter(l => l.status === 'scheduled'))}
+                                              className="px-2 py-0.5 bg-rose-500/10 hover:bg-rose-500 hover:text-slate-950 text-rose-400 rounded text-[9px] font-bold transition-all cursor-pointer"
+                                            >
+                                              Bỏ qua
+                                            </button>
+                                          </>
+                                        )}
+                                        {!hasScheduled && (
+                                          <span className={`text-[8px] px-1.5 py-0.5 font-bold uppercase rounded-md tracking-wider ${
+                                            allTaken ? 'bg-emerald-400/10 text-emerald-400' : 'bg-rose-400/10 text-rose-400'
+                                          }`}>
+                                            {allTaken ? 'Đã uống' : 'Đã bỏ qua'}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                      {slotLogs.map(log => (
+                                        <div key={log.id} className="flex items-center justify-between py-0.5 pl-1">
+                                          <div className="flex items-center gap-2">
+                                            <div className={`w-1.5 h-1.5 rounded-full ${
+                                              log.status === 'taken' ? 'bg-emerald-500' : log.status === 'missed' ? 'bg-rose-500 animate-pulse' : 'bg-slate-700'
+                                            }`} />
+                                            <span className={`text-[11px] font-medium ${log.status === 'taken' ? 'line-through text-slate-500' : 'text-slate-300'}`}>
+                                              {log.medication?.name} - {log.medication?.dosage}
+                                            </span>
+                                            {log.medication?.dosage_quantity && log.medication.dosage_quantity >= 0.1 && (
+                                              <span className="text-[9px] text-teal-400 font-semibold bg-teal-500/10 border border-teal-500/20 px-1 py-0.5 rounded">
+                                                {log.medication.dosage_quantity} viên
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          <span
+                                            onClick={() => handleToggleLogStatus(log.id, log.status)}
+                                            className={`text-[8px] px-1.5 py-0.5 rounded cursor-pointer select-none transition-all font-bold border ${
+                                              log.status === 'taken'
+                                                ? 'bg-emerald-950/20 border-emerald-900/40 text-emerald-400 hover:bg-emerald-900/20'
+                                                : log.status === 'missed'
+                                                ? 'bg-rose-950/25 border-rose-900/30 text-rose-400 hover:bg-rose-900/20'
+                                                : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800'
+                                            }`}
+                                          >
+                                            {log.status === 'taken' ? 'Đã uống' : log.status === 'missed' ? 'Bỏ qua' : 'Chưa uống'}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )
+                              })}
                             </div>
                           </div>
                         )
@@ -1494,7 +1519,8 @@ export default function Home() {
                         onChange={(e) => setNewMedStock(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
                         placeholder="Mặc định: 30"
-                        min="1"
+                        min="0.1"
+                        step="any"
                       />
                     </div>
                   </div>
@@ -1510,7 +1536,8 @@ export default function Home() {
                         onChange={(e) => setNewMedDosageQty(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
                         placeholder="Mặc định: 1"
-                        min="1"
+                        min="0.1"
+                        step="any"
                       />
                     </div>
                     <div>
@@ -1638,7 +1665,8 @@ export default function Home() {
                         value={editMedDosageQty}
                         onChange={(e) => setEditMedDosageQty(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
-                        min="1"
+                        min="0.1"
+                        step="any"
                         required
                       />
                     </div>
@@ -1654,7 +1682,8 @@ export default function Home() {
                         value={editMedStock}
                         onChange={(e) => setEditMedStock(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
-                        min="1"
+                        min="0.1"
+                        step="any"
                         required
                       />
                     </div>
@@ -1668,6 +1697,7 @@ export default function Home() {
                         onChange={(e) => setEditMedRemainingStock(e.target.value)}
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
                         min="0"
+                        step="any"
                         required
                       />
                     </div>

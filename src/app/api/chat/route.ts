@@ -97,12 +97,12 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
                 description: 'Mảng chứa các giờ uống thuốc ở định dạng HH:MM, ví dụ: ["08:00", "20:00"]',
               },
               total_stock: {
-                type: 'INTEGER',
+                type: 'NUMBER',
                 description: 'Tổng số lượng thuốc được cấp/mua nếu có ghi trong đơn hoặc tin nhắn, ví dụ: 30, 60. Nếu không có hãy để trống hoặc trả về null.',
               },
               dosage_quantity: {
-                type: 'INTEGER',
-                description: 'Số lượng viên thuốc hoặc đơn vị uống của loại thuốc này trong mỗi lần uống. Trích xuất từ hướng dẫn uống, ví dụ: "mỗi lần uống 2 viên" -> 2. Mặc định là 1.',
+                type: 'NUMBER',
+                description: 'Số lượng viên thuốc hoặc đơn vị uống của loại thuốc này trong mỗi lần uống. Hỗ trợ cả số thập phân khi người dùng uống nửa viên (ví dụ: "uống 1/2 viên" -> 0.5, "uống 1 viên rưỡi" -> 1.5). Mặc định là 1.',
               },
             },
             required: ['name', 'dosage', 'frequency', 'schedule'],
