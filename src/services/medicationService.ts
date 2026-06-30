@@ -10,6 +10,7 @@ export interface Medication {
   total_stock?: number | null
   remaining_stock?: number | null
   dosage_quantity?: number | null
+  prescription_name?: string | null
   created_at: string
   updated_at: string
 }
@@ -48,6 +49,7 @@ export async function addMedication(medication: {
   total_stock?: number | null
   remaining_stock?: number | null
   dosage_quantity?: number | null
+  prescription_name?: string | null
 }): Promise<Medication | null> {
   const supabase = await createClient()
   const { data, error } = await supabase
@@ -247,6 +249,7 @@ export async function updateMedication(
     total_stock?: number | null
     remaining_stock?: number | null
     dosage_quantity?: number | null
+    prescription_name?: string | null
   }
 ): Promise<Medication | null> {
   const supabase = await createClient()

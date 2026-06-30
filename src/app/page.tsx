@@ -39,6 +39,7 @@ interface Medication {
   total_stock?: number | null
   remaining_stock?: number | null
   dosage_quantity?: number | null
+  prescription_name?: string | null
   created_at: string
 }
 
@@ -91,6 +92,7 @@ export default function Home() {
   const [newMedTime, setNewMedTime] = useState('08:00')
   const [newMedStock, setNewMedStock] = useState('30')
   const [newMedDosageQty, setNewMedDosageQty] = useState('1')
+  const [newMedPrescriptionName, setNewMedPrescriptionName] = useState('')
 
   // Edit Medication Modal States
   const [showEditModal, setShowEditModal] = useState(false)
@@ -102,6 +104,7 @@ export default function Home() {
   const [editMedStock, setEditMedStock] = useState('30')
   const [editMedRemainingStock, setEditMedRemainingStock] = useState('30')
   const [editMedDosageQty, setEditMedDosageQty] = useState('1')
+  const [editMedPrescriptionName, setEditMedPrescriptionName] = useState('')
 
   // UI & Feature States
   const [activeTab, setActiveTab] = useState<'dashboard' | 'chat'>('dashboard')
@@ -354,6 +357,7 @@ export default function Home() {
           schedule: [newMedTime],
           total_stock: newMedStock ? parseInt(newMedStock) : null,
           dosage_quantity: newMedDosageQty ? parseInt(newMedDosageQty) : 1,
+          prescription_name: newMedPrescriptionName || null,
         }),
       })
 
@@ -362,6 +366,7 @@ export default function Home() {
         setNewMedName('')
         setNewMedDosage('')
         setNewMedDosageQty('1')
+        setNewMedPrescriptionName('')
         fetchMedications()
         fetchTodayLogs()
         
@@ -390,6 +395,7 @@ export default function Home() {
     setEditMedStock(med.total_stock?.toString() || '30')
     setEditMedRemainingStock(med.remaining_stock?.toString() || '30')
     setEditMedDosageQty(med.dosage_quantity?.toString() || '1')
+    setEditMedPrescriptionName(med.prescription_name || '')
     setShowEditModal(true)
   }
 
@@ -411,6 +417,7 @@ export default function Home() {
           total_stock: editMedStock ? parseInt(editMedStock) : null,
           remaining_stock: editMedRemainingStock ? parseInt(editMedRemainingStock) : null,
           dosage_quantity: editMedDosageQty ? parseInt(editMedDosageQty) : 1,
+          prescription_name: editMedPrescriptionName || null,
         }),
       })
 
@@ -1005,88 +1012,114 @@ export default function Home() {
                     Hãy chat với MediMate AI ở khung bên phải để thêm thuốc!
                   </div>
                 ) : (
-                  <div className="space-y-3 overflow-y-auto max-h-[300px] md:max-h-[400px]">
-                    {medications.map((med) => (
-                      <div
-                        key={med.id}
-                        className="flex items-center justify-between p-4 bg-slate-950/40 border border-slate-900 hover:border-slate-800 rounded-xl transition-all group"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-indigo-500/10 border border-indigo-500/20 rounded-lg flex items-center justify-center">
-                            <span className="font-bold text-indigo-400 text-sm">
-                              {med.name.slice(0, 2).toUpperCase()}
+                  <div className="space-y-6 overflow-y-auto max-h-[300px] md:max-h-[400px] pr-1">
+                    {(() => {
+                      const grouped: Record<string, Medication[]> = {}
+                      medications.forEach(med => {
+                        const groupKey = med.prescription_name || 'Thuốc lẻ / Tự thêm'
+                        if (!grouped[groupKey]) grouped[groupKey] = []
+                        grouped[groupKey].push(med)
+                      })
+                      return Object.entries(grouped).map(([groupName, groupMeds]) => (
+                        <div key={groupName} className="space-y-2.5">
+                          {/* Group Header */}
+                          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900/30 rounded-xl border border-slate-900/60 sticky top-0 bg-slate-950/80 backdrop-blur z-10 shrink-0">
+                            <FileText className="w-4 h-4 text-indigo-400" />
+                            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                              {groupName}
+                            </span>
+                            <span className="text-[10px] px-1.5 py-0.5 bg-slate-900 text-slate-500 rounded-md font-mono font-bold">
+                              {groupMeds.length} thuốc
                             </span>
                           </div>
-                          <div>
-                            <div className="font-bold text-sm text-slate-200">{med.name}</div>
-                            <div className="text-xs text-slate-400 mt-0.5 flex flex-wrap gap-x-2">
-                              <span>{med.dosage} • {med.frequency}</span>
-                              {med.dosage_quantity && med.dosage_quantity >= 1 && (
-                                <span className="text-teal-400 font-medium">
-                                  (Mỗi lần: {med.dosage_quantity} viên)
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex gap-1.5 mt-1.5">
-                              {med.schedule.map((time, idx) => (
-                                <span
-                                  key={idx}
-                                  className="text-[9px] font-bold px-1.5 py-0.5 bg-slate-900 border border-slate-800 text-slate-400 rounded-md"
-                                >
-                                  {time}
-                                </span>
-                              ))}
-                            </div>
 
-                            {/* Stock Indicator */}
-                            {med.total_stock !== undefined && med.total_stock !== null && (
-                              <div className="mt-2.5 space-y-1">
-                                <div className="flex items-center justify-between text-[10px] text-slate-400">
-                                  <span>Tồn kho: <strong className={med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 ? "text-rose-400 font-bold" : "text-slate-300"}>
-                                    {med.remaining_stock} / {med.total_stock}
-                                  </strong></span>
-                                  {med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 && (
-                                    <span className="text-rose-400 font-bold animate-pulse">⚠️ Sắp hết!</span>
-                                  )}
+                          {/* Group Medications */}
+                          <div className="space-y-3">
+                            {groupMeds.map((med) => (
+                              <div
+                                key={med.id}
+                                className="flex items-center justify-between p-4 bg-slate-950/40 border border-slate-900 hover:border-slate-800 rounded-xl transition-all group"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 bg-indigo-500/10 border border-indigo-500/20 rounded-lg flex items-center justify-center">
+                                    <span className="font-bold text-indigo-400 text-sm">
+                                      {med.name.slice(0, 2).toUpperCase()}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <div className="font-bold text-sm text-slate-200">{med.name}</div>
+                                    <div className="text-xs text-slate-400 mt-0.5 flex flex-wrap gap-x-2">
+                                      <span>{med.dosage} • {med.frequency}</span>
+                                      {med.dosage_quantity && med.dosage_quantity >= 1 && (
+                                        <span className="text-teal-400 font-medium">
+                                          (Mỗi lần: {med.dosage_quantity} viên)
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex gap-1.5 mt-1.5">
+                                      {med.schedule.map((time, idx) => (
+                                        <span
+                                          key={idx}
+                                          className="text-[9px] font-bold px-1.5 py-0.5 bg-slate-900 border border-slate-800 text-slate-400 rounded-md"
+                                        >
+                                          {time}
+                                        </span>
+                                      ))}
+                                    </div>
+
+                                    {/* Stock Indicator */}
+                                    {med.total_stock !== undefined && med.total_stock !== null && (
+                                      <div className="mt-2.5 space-y-1">
+                                        <div className="flex items-center justify-between text-[10px] text-slate-400">
+                                          <span>Tồn kho: <strong className={med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 ? "text-rose-400 font-bold" : "text-slate-300"}>
+                                            {med.remaining_stock} / {med.total_stock}
+                                          </strong></span>
+                                          {med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 && (
+                                            <span className="text-rose-400 font-bold animate-pulse">⚠️ Sắp hết!</span>
+                                          )}
+                                        </div>
+                                        <div className="w-32 h-1 bg-slate-900 rounded-full overflow-hidden flex">
+                                          <div 
+                                            className={`h-full rounded-full transition-all ${
+                                              med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 ? "bg-rose-500 animate-pulse" : "bg-teal-500"
+                                            }`}
+                                            style={{ width: `${((med.remaining_stock ?? 0) / (med.total_stock ?? 1)) * 100}%` }}
+                                          />
+                                        </div>
+                                        <button 
+                                          type="button"
+                                          onClick={() => handleRefillStock(med.id, med.total_stock ?? 30)}
+                                          className="text-[9px] text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-0.5 mt-1 cursor-pointer"
+                                        >
+                                          🔄 Nạp thêm thuốc
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
-                                <div className="w-32 h-1 bg-slate-900 rounded-full overflow-hidden flex">
-                                  <div 
-                                    className={`h-full rounded-full transition-all ${
-                                      med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 ? "bg-rose-500 animate-pulse" : "bg-teal-500"
-                                    }`}
-                                    style={{ width: `${((med.remaining_stock ?? 0) / (med.total_stock ?? 1)) * 100}%` }}
-                                  />
+
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    onClick={() => handleEditMedicationClick(med)}
+                                    className="p-2 text-slate-600 hover:text-indigo-400 hover:bg-slate-900 rounded-lg transition-colors cursor-pointer"
+                                    title="Sửa lịch thuốc"
+                                  >
+                                    <Pencil className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteMedication(med.id)}
+                                    className="p-2 text-slate-600 hover:text-rose-400 hover:bg-slate-900 rounded-lg transition-colors cursor-pointer"
+                                    title="Xoá lịch thuốc"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
                                 </div>
-                                <button 
-                                  type="button"
-                                  onClick={() => handleRefillStock(med.id, med.total_stock ?? 30)}
-                                  className="text-[9px] text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-0.5 mt-1 cursor-pointer"
-                                >
-                                  🔄 Nạp thêm thuốc
-                                </button>
                               </div>
-                            )}
+                            ))}
                           </div>
                         </div>
-
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            onClick={() => handleEditMedicationClick(med)}
-                            className="p-2 text-slate-600 hover:text-indigo-400 hover:bg-slate-900 rounded-lg transition-colors cursor-pointer"
-                            title="Sửa lịch thuốc"
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteMedication(med.id)}
-                            className="p-2 text-slate-600 hover:text-rose-400 hover:bg-slate-900 rounded-lg transition-colors cursor-pointer"
-                            title="Xoá lịch thuốc"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      ))
+                    })()}
                   </div>
                 )}
               </div>
@@ -1390,18 +1423,32 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                      Số viên/đơn vị uống mỗi lần
-                    </label>
-                    <input
-                      type="number"
-                      value={newMedDosageQty}
-                      onChange={(e) => setNewMedDosageQty(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
-                      placeholder="Mặc định: 1"
-                      min="1"
-                    />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Số viên uống mỗi lần
+                      </label>
+                      <input
+                        type="number"
+                        value={newMedDosageQty}
+                        onChange={(e) => setNewMedDosageQty(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
+                        placeholder="Mặc định: 1"
+                        min="1"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Nhãn đơn thuốc (Tùy chọn)
+                      </label>
+                      <input
+                        type="text"
+                        value={newMedPrescriptionName}
+                        onChange={(e) => setNewMedPrescriptionName(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
+                        placeholder="Ví dụ: Đơn khớp, Đơn huyết áp"
+                      />
+                    </div>
                   </div>
 
                   <button
@@ -1437,17 +1484,31 @@ export default function Home() {
                 </h3>
 
                 <form onSubmit={handleSaveEditMedication} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                      Tên thuốc
-                    </label>
-                    <input
-                      type="text"
-                      value={editMedName}
-                      onChange={(e) => setEditMedName(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
-                      required
-                    />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Tên thuốc
+                      </label>
+                      <input
+                        type="text"
+                        value={editMedName}
+                        onChange={(e) => setEditMedName(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                        Nhãn đơn thuốc (Tùy chọn)
+                      </label>
+                      <input
+                        type="text"
+                        value={editMedPrescriptionName}
+                        onChange={(e) => setEditMedPrescriptionName(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500"
+                        placeholder="Ví dụ: Đơn khớp, Đơn huyết áp"
+                      />
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">

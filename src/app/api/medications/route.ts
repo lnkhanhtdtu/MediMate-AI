@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { name, dosage, frequency, schedule, total_stock, dosage_quantity } = body
+    const { name, dosage, frequency, schedule, total_stock, dosage_quantity, prescription_name } = body
 
     if (!name || !dosage || !frequency || !schedule) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -42,6 +42,7 @@ export async function POST(request: Request) {
       total_stock: total_stock || null,
       remaining_stock: total_stock || null,
       dosage_quantity: dosage_quantity || 1,
+      prescription_name: prescription_name || null,
     })
     if (!saved) {
       return NextResponse.json({ error: 'Failed to save medication' }, { status: 500 })
@@ -90,7 +91,7 @@ export async function PUT(request: Request) {
     }
 
     const body = await request.json()
-    const { id, name, dosage, frequency, schedule, total_stock, remaining_stock, dosage_quantity } = body
+    const { id, name, dosage, frequency, schedule, total_stock, remaining_stock, dosage_quantity, prescription_name } = body
 
     if (!id) {
       return NextResponse.json({ error: 'Missing medication id' }, { status: 400 })
@@ -104,6 +105,7 @@ export async function PUT(request: Request) {
       total_stock,
       remaining_stock,
       dosage_quantity,
+      prescription_name,
     })
 
     if (!updated) {

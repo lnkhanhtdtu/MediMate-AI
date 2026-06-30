@@ -158,6 +158,12 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
       const savedMeds = []
       const warnings = []
 
+      // Generate a default prescription name based on source (OCR image vs chat) and date
+      const dateStr = new Date().toLocaleDateString('vi-VN')
+      const defaultPrescriptionName = contentParts.some(p => typeof p === 'object' && 'inlineData' in p)
+        ? `Đơn thuốc hình ảnh (${dateStr})`
+        : `Đơn thuốc từ chat (${dateStr})`
+
       for (const newMed of newMeds) {
         const existingDrugNames = [
           ...currentMedications.map((m) => m.name),
@@ -247,6 +253,7 @@ Hãy trả về phản hữu JSON theo định dạng sau:
           total_stock: newMed.total_stock || null,
           remaining_stock: newMed.total_stock || null,
           dosage_quantity: newMed.dosage_quantity || 1,
+          prescription_name: newMed.prescription_name || defaultPrescriptionName,
         })
         if (saved) {
           savedMeds.push(saved)
