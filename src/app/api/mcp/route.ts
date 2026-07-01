@@ -22,7 +22,8 @@ async function fetchDrugLabel(drugName: string): Promise<DrugLabelInfo | null> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
     if (!res.ok) {
-      console.warn(`OpenFDA returned status ${res.status} for drug: ${drugName}`)
+      // Do NOT log the drug name (PHI). Log only the opaque status.
+      console.warn('OpenFDA lookup returned a non-OK status', { status: res.status })
       return null
     }
     const data = await res.json()
@@ -46,7 +47,8 @@ async function fetchDrugLabel(drugName: string): Promise<DrugLabelInfo | null> {
       warnings: extractText(result.warnings),
     }
   } catch (error) {
-    console.error(`Error fetching drug label for ${drugName} from OpenFDA:`, error)
+    // Do NOT log the drug name (PHI).
+    console.error('OpenFDA drug-label lookup failed', error)
     return null
   }
 }
@@ -225,7 +227,7 @@ export async function POST(request: Request) {
       jsonrpc: '2.0',
       error: {
         code: -32603,
-        message: error.message || 'Internal server error.',
+        message: 'Internal server error.',
       },
       id,
     })

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { createClient as createServerClient } from '@/utils/supabase/server'
+import { apiError } from '@/utils/apiError'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,9 +15,17 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Check if the user is an admin
-    const email = user.email || ''
-    const isAdmin = email.toLowerCase().includes('admin') || email === 'admin@medimate.ai'
+    // Check if the user is an admin.
+    // SECURITY: authorize against an explicit, server-side allowlist (ADMIN_EMAILS env),
+    // NOT a substring match. A `.includes('admin')` check let anyone who registered an
+    // address merely containing "admin" (e.g. notadmin@evil.com) reach the RLS-bypassing
+    // service-role client below and read every patient's data.
+    const adminEmails = (process.env.ADMIN_EMAILS ?? 'admin@medimate.ai')
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean)
+    const email = (user.email ?? '').toLowerCase()
+    const isAdmin = adminEmails.includes(email)
     if (!isAdmin) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
@@ -96,9 +105,8 @@ export async function GET(request: Request) {
       },
       users: usersData,
     })
-  } catch (error: any) {
-    console.error('Admin API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  } catch (error) {
+    return apiError('Admin API', error)
   }
 }
 

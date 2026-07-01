@@ -7,6 +7,11 @@ import {
   getMedicationLogs,
   updateLogStatus,
 } from '@/services/medicationService'
+import { apiError } from '@/utils/apiError'
+
+// Gemini model id — overridable via env so a model rename can be fixed without a code
+// change/redeploy. IMPORTANT: verify this value resolves against the live @google/genai SDK.
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-3.1-flash-lite'
 
 function safeParseJson<T>(text: string | undefined | null): T | null {
   if (!text) return null
@@ -166,7 +171,7 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
     }
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-lite',
+      model: GEMINI_MODEL,
       contents: contentParts,
       config: {
         systemInstruction: intakeSystemInstruction,
@@ -250,7 +255,7 @@ Hãy trả về phản hữu JSON theo định dạng sau:
 }
 `
             const checkResponse = await ai.models.generateContent({
-              model: 'gemini-3.1-flash-lite',
+              model: GEMINI_MODEL,
               contents: 'Hãy kiểm tra báo cáo và trả về kết quả tương tác thuốc.',
               config: {
                 systemInstruction: checkerInstruction,
@@ -267,7 +272,18 @@ Hãy trả về phản hữu JSON theo định dạng sau:
               },
             })
 
-            const checkResult = safeParseJson<any>(checkResponse.text) || { has_interaction: false, severity: 'none', explanation: '' }
+            const checkResult = safeParseJson<any>(checkResponse.text)
+
+            // Fail-safe: if the checker output can't be parsed, do NOT assume the drug is
+            // safe — surface uncertainty and let the user confirm with a professional.
+            if (!checkResult) {
+              warnings.push({
+                severity: 'medium',
+                explanation: `Không phân tích được kết quả kiểm tra tương tác cho "${newMed.name}". Vui lòng hỏi ý kiến bác sĩ hoặc dược sĩ trước khi sử dụng.`,
+                medication: newMed,
+              })
+              continue
+            }
 
             if (checkResult.has_interaction && (checkResult.severity === 'high' || checkResult.severity === 'medium')) {
               warnings.push({
@@ -277,6 +293,15 @@ Hãy trả về phản hữu JSON theo định dạng sau:
               })
               continue
             }
+          } else {
+            // Fail-safe: the OpenFDA lookup failed or returned nothing. Don't assume the new
+            // drug is safe — warn and require confirmation instead of silently saving it.
+            warnings.push({
+              severity: 'medium',
+              explanation: `Chưa xác minh được tương tác thuốc cho "${newMed.name}" (không lấy được dữ liệu từ OpenFDA). Vui lòng hỏi ý kiến bác sĩ hoặc dược sĩ trước khi sử dụng.`,
+              medication: newMed,
+            })
+            continue
           }
         }
 
@@ -364,10 +389,7 @@ Hãy trả về phản hữu JSON theo định dạng sau:
       message: nluResult.general_response,
     })
 
-  } catch (error: any) {
-    console.error('Chat API Error:', error)
-    return NextResponse.json({
-      error: error.message || 'Đã xảy ra lỗi hệ thống, vui lòng thử lại.',
-    }, { status: 500 })
+  } catch (error) {
+    return apiError('Chat API', error)
   }
 }

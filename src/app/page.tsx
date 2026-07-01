@@ -323,19 +323,19 @@ export default function Home() {
 
   // Caregiver alert trigger helper
   const triggerCaregiverEscalation = (medName: string, time: string) => {
-    const alertMsg = `📧 [${t.guardianAlert}] ${t.guardianAlertSent} ${caregiverName} (${caregiverEmail}) ${t.dueToMissed} ${medName} (lịch: ${time})!`
+    const alertMsg = `📧 [MÔ PHỎNG] [${t.guardianAlert}] ${t.guardianAlertSent} ${caregiverName} (${caregiverEmail}) ${t.dueToMissed} ${medName} (lịch: ${time})!`
     setCaregiverAlerts((prev) => [alertMsg, ...prev])
   }
 
   const handleTriggerSOSTest = () => {
     const timeStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-    const alertMsg = `🚨 [CẢNH BÁO SOS] Đã phát tín hiệu khẩn cấp (Test) tới Người bảo hộ ${caregiverName} (${caregiverEmail}) vào lúc ${timeStr}!`
+    const alertMsg = `🚨 [MÔ PHỎNG SOS] Đây là bản trình diễn — tín hiệu khẩn cấp sẽ được gửi tới Người bảo hộ ${caregiverName} (${caregiverEmail}) lúc ${timeStr}. (Bản production sẽ gửi Email/SMS thật.)`
     setCaregiverAlerts((prev) => [alertMsg, ...prev])
     setMessages((prev) => [
       ...prev,
       {
         role: 'model',
-        content: `🚨 **Cảnh báo khẩn cấp (SOS Test)** đã được gửi tới người bảo hộ **${caregiverName}** (${caregiverEmail}). Hệ thống liên lạc khẩn cấp đã được kiểm tra và kích hoạt thành công.`,
+        content: `🚨 **Mô phỏng cảnh báo khẩn cấp (SOS Demo)** — trong bản production, hệ thống sẽ gửi Email/SMS tới người bảo hộ **${caregiverName}** (${caregiverEmail}). Đây là bản trình diễn nên hiện chưa gửi thật.`,
       },
     ])
   }
@@ -1082,7 +1082,7 @@ export default function Home() {
                       : 'bg-slate-950/60 border-slate-800 text-indigo-300 hover:text-indigo-200'
                   }`}
                 >
-                  <User className="w-4 h-4" />
+                  <UserIcon className="w-4 h-4" />
                   Đăng Nhập User
                 </button>
               </div>
@@ -1356,7 +1356,7 @@ export default function Home() {
                       onClick={handleTriggerSOSTest}
                       className="text-[10px] text-rose-500 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-lg font-black hover:bg-rose-500 hover:text-slate-950 cursor-pointer transition-all"
                     >
-                      🚨 SOS Test
+                      🚨 SOS (Demo)
                     </button>
                     <button 
                       type="button"
@@ -1397,8 +1397,8 @@ export default function Home() {
                   <div className={`mt-4 space-y-2 border-t pt-3 ${isLightMode ? 'border-slate-100' : 'border-slate-900'}`}>
                     <div className="text-[10px] text-slate-400 font-semibold italic text-center py-2">
                       {lang === 'vi' 
-                        ? 'Chưa có cảnh báo nào được gửi. Hệ thống tự động gửi SOS/Email nếu trễ lịch uống thuốc.' 
-                        : 'No alerts sent. SOS/Email triggers automatically on missed medication.'}
+                        ? 'Chưa có cảnh báo nào. Đây là bản mô phỏng — bản production sẽ tự động gửi SOS/Email khi trễ lịch uống thuốc.'
+                        : 'No alerts yet. This is a simulation — production would auto-send SOS/Email on missed medication.'}
                     </div>
                   </div>
                 )}

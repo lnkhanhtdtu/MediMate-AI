@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { getMedications, addMedication, deleteMedication, updateMedication } from '@/services/medicationService'
+import { apiError } from '@/utils/apiError'
 
 export async function GET() {
   try {
@@ -13,8 +14,8 @@ export async function GET() {
 
     const medications = await getMedications()
     return NextResponse.json(medications)
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  } catch (error) {
+    return apiError('Medications API', error)
   }
 }
 
@@ -49,8 +50,8 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json(saved)
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  } catch (error) {
+    return apiError('Medications API', error)
   }
 }
 
@@ -76,8 +77,8 @@ export async function DELETE(request: Request) {
     }
 
     return NextResponse.json({ success: true })
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  } catch (error) {
+    return apiError('Medications API', error)
   }
 }
 
@@ -113,7 +114,7 @@ export async function PUT(request: Request) {
     }
 
     return NextResponse.json(updated)
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  } catch (error) {
+    return apiError('Medications API', error)
   }
 }

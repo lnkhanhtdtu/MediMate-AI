@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { getMedicationLogs, updateLogStatus } from '@/services/medicationService'
+import { apiError } from '@/utils/apiError'
 
 export async function GET(request: Request) {
   try {
@@ -16,8 +17,8 @@ export async function GET(request: Request) {
 
     const logs = await getMedicationLogs(date)
     return NextResponse.json(logs)
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  } catch (error) {
+    return apiError('Logs API', error)
   }
 }
 
@@ -45,7 +46,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ success: true })
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  } catch (error) {
+    return apiError('Logs API', error)
   }
 }

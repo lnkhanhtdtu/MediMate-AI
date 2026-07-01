@@ -9,7 +9,7 @@ Dự án này là bài tập lớn cuối khóa (Capstone Project) thuộc chư�
 ## ✨ Tính Năng Nổi Bật
 
 1. **Trợ lý Sức khỏe AI Đa nhiệm**: Tương tác bằng ngôn ngữ tự nhiên thông qua giao diện chat tiếng Việt cực kỳ thân thiện.
-2. **Kiểm tra Tương Tác Thuốc (MCP-OpenFDA)**: Tích hợp mô hình Model Context Protocol (MCP) nội bộ để tự động tra cứu dữ liệu từ OpenFDA và cảnh báo tương tác chéo nguy hiểm trước khi thêm lịch uống thuốc mới.
+2. **Kiểm tra Tương Tác Thuốc (JSON-RPC theo mô hình MCP + OpenFDA)**: Một endpoint công cụ JSON-RPC 2.0 nội bộ (thiết kế theo mô hình Model Context Protocol – MCP: `tools/list`, `tools/call`) tự động tra cứu dữ liệu từ OpenFDA và cảnh báo tương tác chéo nguy hiểm trước khi thêm lịch uống thuốc mới.
 3. **Quản lý Đơn Thuốc Bằng Hình Ảnh (OCR)**: Cho phép người dùng chụp ảnh đơn thuốc bằng camera hoặc tải ảnh lên. AI tự động trích xuất thông tin thuốc, liều lượng, tần suất và tự động lên lịch uống.
 4. **Theo dõi Tỷ lệ Tuân thủ (Adherence Streak)**: Tính toán chuỗi ngày tuân thủ thực tế của người dùng dựa trên tỷ lệ uống thuốc đúng hẹn đạt trên 80% mỗi ngày.
 5. **Phân hệ Quản trị Hệ thống (Admin Portal)**:
@@ -40,7 +40,7 @@ Dự án này là bài tập lớn cuối khóa (Capstone Project) thuộc chư�
 │   │   │   ├── admin/      # API quản trị xem thông tin người dùng
 │   │   │   ├── chat/       # API xử lý hội thoại AI, OCR và lên lịch uống thuốc
 │   │   │   ├── logs/       # API truy xuất & cập nhật trạng thái uống thuốc
-│   │   │   ├── mcp/        # Điểm cuối MCP Server tích hợp tra cứu OpenFDA
+│   │   │   ├── mcp/        # Endpoint công cụ JSON-RPC (theo mô hình MCP) tra cứu OpenFDA
 │   │   │   ├── medications/ # API CRUD đơn thuốc của bệnh nhân
 │   │   │   └── stats/      # API tính chuỗi ngày tuân thủ (streak) thực tế
 │   │   ├── globals.css     # Định nghĩa CSS & thiết lập màu sắc giao diện
@@ -116,7 +116,7 @@ npm run build
 
 ## 🔒 Kiểm Soát Bảo Mật & RLS
 
-Hệ thống tuân thủ chặt chẽ các chính sách bảo mật dữ liệu y khoa (HIPAA compliance guidelines):
+Hệ thống áp dụng các nguyên tắc bảo mật dữ liệu y khoa lấy cảm hứng từ HIPAA (HIPAA-inspired safeguards):
 - Mọi API route phục vụ người dùng đều yêu cầu xác thực phiên đăng nhập bằng JWT cookies thông qua Supabase.
 - RLS của bảng `medication_logs` được thắt chặt qua chính sách kiểm tra quyền sở hữu đối với cả `user_id` của bản ghi log lẫn `user_id` của tệp tin thuốc (`medication_id`) được tham chiếu tới, ngăn chặn tuyệt đối việc ghi đè log chéo giữa các tài khoản.
 - Không ghi nhận dữ liệu y khoa nhạy cảm (PHI) ra ngoài tệp tin log hệ thống (console logs).
