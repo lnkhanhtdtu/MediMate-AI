@@ -329,6 +329,19 @@ export default function Home() {
     setCaregiverAlerts((prev) => [alertMsg, ...prev])
   }
 
+  const handleTriggerSOSTest = () => {
+    const timeStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+    const alertMsg = `🚨 [CẢNH BÁO SOS] Đã phát tín hiệu khẩn cấp (Test) tới Người bảo hộ ${caregiverName} (${caregiverEmail}) vào lúc ${timeStr}!`
+    setCaregiverAlerts((prev) => [alertMsg, ...prev])
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: 'model',
+        content: `🚨 **Cảnh báo khẩn cấp (SOS Test)** đã được gửi tới người bảo hộ **${caregiverName}** (${caregiverEmail}). Hệ thống liên lạc khẩn cấp đã được kiểm tra và kích hoạt thành công.`,
+      },
+    ])
+  }
+
   // Handle Mark as Missed log
   const handleMarkAsMissed = async (logId: string, medName: string, timeStr: string) => {
     try {
@@ -1401,13 +1414,22 @@ export default function Home() {
                     <Bell className="w-4 h-4 text-rose-500" />
                     <h3 className="text-sm font-black">{t.guardian}</h3>
                   </div>
-                  <button 
-                    type="button"
-                    onClick={() => setShowCaregiverModal(true)}
-                    className="text-xs text-rose-500 font-bold hover:underline cursor-pointer min-h-[30px]"
-                  >
-                    {t.setup}
-                  </button>
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={handleTriggerSOSTest}
+                      className="text-[10px] text-rose-500 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-lg font-black hover:bg-rose-500 hover:text-slate-950 cursor-pointer transition-all"
+                    >
+                      🚨 SOS Test
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => setShowCaregiverModal(true)}
+                      className="text-xs text-rose-500 font-bold hover:underline cursor-pointer min-h-[30px]"
+                    >
+                      {t.setup}
+                    </button>
+                  </div>
                 </div>
                 <div className="text-xs flex flex-col gap-1.5">
                   <div className="flex justify-between">
@@ -1420,7 +1442,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                {caregiverAlerts.length > 0 && (
+                {caregiverAlerts.length > 0 ? (
                   <div className={`mt-4 space-y-2 border-t pt-3 ${isLightMode ? 'border-slate-100' : 'border-slate-900'}`}>
                     <div className="text-[10px] text-rose-500 font-bold uppercase tracking-wider">
                       {t.alertHistory}
@@ -1433,6 +1455,14 @@ export default function Home() {
                           {alert}
                         </div>
                       ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className={`mt-4 space-y-2 border-t pt-3 ${isLightMode ? 'border-slate-100' : 'border-slate-900'}`}>
+                    <div className="text-[10px] text-slate-400 font-semibold italic text-center py-2">
+                      {lang === 'vi' 
+                        ? 'Chưa có cảnh báo nào được gửi. Hệ thống tự động gửi SOS/Email nếu trễ lịch uống thuốc.' 
+                        : 'No alerts sent. SOS/Email triggers automatically on missed medication.'}
                     </div>
                   </div>
                 )}
