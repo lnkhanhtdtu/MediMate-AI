@@ -221,7 +221,6 @@ export default function Home() {
   // State Variables
   const [lang, setLang] = useState<'vi' | 'en'>('vi')
   const [isLightMode, setIsLightMode] = useState<boolean>(true)
-  const [autoSpeak, setAutoSpeak] = useState<boolean>(true) // auto speak for elderly accessibility
   const t = translations[lang]
 
   const [user, setUser] = useState<any>(null)
@@ -272,7 +271,6 @@ export default function Home() {
   // UI & Feature States
   const [activeTab, setActiveTab] = useState<'dashboard' | 'chat' | 'admin'>('dashboard')
   const [isListening, setIsListening] = useState(false)
-  const [isPlayingSpeech, setIsPlayingSpeech] = useState<number | null>(null)
   const [selectedImage, setSelectedImage] = useState<{ data: string; mimeType: string } | null>(null)
   const [caregiverEmail, setCaregiverEmail] = useState('mom@medimate.ai')
   const [caregiverName, setCaregiverName] = useState('Mẹ')
@@ -420,110 +418,7 @@ export default function Home() {
     }
   }
 
-  // Text-to-Speech (Google TTS with Web Speech API Fallback)
-  const speakText = (text: string, index: number) => {
-    if (typeof window !== 'undefined') {
-      const cleanText = text.replace(/[*_#`~[\]()]/g, '')
-
-      // If clicked again on the playing one, stop it
-      if (isPlayingSpeech === index) {
-        if ((window as any).activeAudio) {
-          try {
-            (window as any).activeAudio.pause()
-          } catch (_) {}
-          (window as any).activeAudio = null
-        }
-        window.speechSynthesis.cancel()
-        setIsPlayingSpeech(null)
-        return
-      }
-
-      // Cancel any current playbacks
-      if ((window as any).activeAudio) {
-        try {
-          (window as any).activeAudio.pause()
-        } catch (_) {}
-        (window as any).activeAudio = null
-      }
-      window.speechSynthesis.cancel()
-
-      // 1. Try Google Translate TTS for a perfect native Vietnamese voice
-      try {
-        const chunks: string[] = []
-        // Split by sentence punctuation to respect the 200 character API limit
-        const sentences = cleanText.match(/[^.!?\n]+[.!?\n]*/g) || [cleanText]
-        let currentChunk = ''
-        for (const sentence of sentences) {
-          if ((currentChunk + sentence).length > 180) {
-            chunks.push(currentChunk.trim())
-            currentChunk = sentence
-          } else {
-            currentChunk += ' ' + sentence
-          }
-        }
-        if (currentChunk.trim()) {
-          chunks.push(currentChunk.trim())
-        }
-
-        let chunkIndex = 0
-        const playNext = () => {
-          if (chunkIndex >= chunks.length) {
-            setIsPlayingSpeech(null)
-            return
-          }
-          const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=${encodeURIComponent(chunks[chunkIndex])}`;
-          const audio = new Audio(audioUrl);
-          (window as any).activeAudio = audio;
-          
-          audio.onended = () => {
-            chunkIndex++
-            playNext()
-          }
-          audio.onerror = () => {
-            useWebSpeechFallback(cleanText)
-          }
-          audio.play().catch(() => {
-            useWebSpeechFallback(cleanText)
-          })
-        }
-
-        setIsPlayingSpeech(index)
-        playNext()
-      } catch (err) {
-        useWebSpeechFallback(cleanText)
-      }
-    }
-
-    // Web Speech API Fallback
-    function useWebSpeechFallback(cleanTextToSpeak: string) {
-      try {
-        const utterance = new SpeechSynthesisUtterance(cleanTextToSpeak)
-        utterance.lang = 'vi-VN'
-
-        const voices = window.speechSynthesis.getVoices()
-        // Try finding any voice containing 'vi' for Vietnamese
-        const viVoice = voices.find((v) => v.lang.toLowerCase().includes('vi'))
-        if (viVoice) {
-          utterance.voice = viVoice
-        }
-
-        utterance.onend = () => {
-          setIsPlayingSpeech(null)
-        }
-        utterance.onerror = () => {
-          setIsPlayingSpeech(null)
-        }
-
-        setIsPlayingSpeech(index)
-        window.speechSynthesis.speak(utterance)
-      } catch (e) {
-        console.error('TTS Fallback failed:', e)
-        setIsPlayingSpeech(null)
-      }
-    }
-  }
-
-  // Preload synthesis voices and restore client settings from localStorage on startup
+  // Restore client settings from localStorage on startup
   useEffect(() => {
     if (typeof window !== 'undefined') {
       // 1. Restoring UI Preferences & Caregiver Details
@@ -544,18 +439,6 @@ export default function Home() {
         try {
           setCaregiverAlerts(JSON.parse(savedCaregiverAlerts))
         } catch (_) {}
-      }
-
-      // 2. TTS Voice preloading
-      if (window.speechSynthesis) {
-        window.speechSynthesis.getVoices()
-        const handleVoicesChanged = () => {
-          window.speechSynthesis.getVoices()
-        }
-        window.speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged)
-        return () => {
-          window.speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged)
-        }
       }
     }
   }, [])
@@ -581,14 +464,7 @@ export default function Home() {
     }
   }, [caregiverAlerts])
 
-  useEffect(() => {
-    if (messages.length > 0) {
-      const lastMsg = messages[messages.length - 1]
-      if (lastMsg.role === 'model' && autoSpeak) {
-        speakText(lastMsg.content, messages.length - 1)
-      }
-    }
-  }, [messages.length, autoSpeak])
+
 
   // File Upload image change handler
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -959,30 +835,21 @@ export default function Home() {
     }
   }
 
-  // Quick Guest/Demo Sign In for Hackathon Judges
-  const handleDemoSignIn = async () => {
+  // Quick Demo Sign In helper
+  const handleQuickSignIn = async (role: 'admin' | 'user') => {
     setAuthLoading(true)
     setAuthError(null)
-    const demoEmail = 'demo@medimate.ai'
-    const demoPassword = 'demomedimate123'
+    const email = role === 'admin' ? 'admin@medimate.ai' : 'user@medimate.ai'
+    const password = role === 'admin' ? 'admin123456' : 'user123456'
 
     try {
-      // Try sign up first to avoid console network errors on clean database
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: demoEmail,
-        password: demoPassword,
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       })
-
-      // If sign up fails or returns no session (e.g. user already exists), do sign in
-      if (signUpError || !signUpData.session) {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: demoEmail,
-          password: demoPassword,
-        })
-        if (signInError) throw signInError
-      }
+      if (error) throw error
     } catch (err: any) {
-      setAuthError(err.message || 'Không thể tạo phiên demo.')
+      setAuthError(err.message || 'Không thể đăng nhập tài khoản demo.')
     } finally {
       setAuthLoading(false)
     }
@@ -1190,18 +1057,35 @@ export default function Home() {
                 <div className={`flex-grow border-t ${isLightMode ? 'border-slate-200' : 'border-slate-800'}`} />
               </div>
 
-              <button
-                onClick={handleDemoSignIn}
-                disabled={authLoading}
-                className={`w-full border py-3 rounded-xl transition-all flex items-center justify-center gap-2 text-sm cursor-pointer font-bold ${
-                  isLightMode 
-                    ? 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 shadow-sm' 
-                    : 'bg-slate-950/60 border-slate-800 text-indigo-300 hover:text-indigo-200'
-                }`}
-              >
-                <Sparkles className="w-4 h-4 text-indigo-500" />
-                Dùng Thử Tài Khoản Demo (Không Cần Đăng Ký)
-              </button>
+              <div className="grid grid-cols-2 gap-3 w-full">
+                <button
+                  type="button"
+                  onClick={() => handleQuickSignIn('admin')}
+                  disabled={authLoading}
+                  className={`border py-3 px-2 rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs cursor-pointer font-bold ${
+                    isLightMode 
+                      ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100 shadow-sm' 
+                      : 'bg-slate-950/60 border-slate-800 text-rose-400 hover:text-rose-300'
+                  }`}
+                >
+                  <ShieldAlert className="w-4 h-4" />
+                  Đăng Nhập Admin
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => handleQuickSignIn('user')}
+                  disabled={authLoading}
+                  className={`border py-3 px-2 rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs cursor-pointer font-bold ${
+                    isLightMode 
+                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 shadow-sm' 
+                      : 'bg-slate-950/60 border-slate-800 text-indigo-300 hover:text-indigo-200'
+                  }`}
+                >
+                  <User className="w-4 h-4" />
+                  Đăng Nhập User
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1748,20 +1632,7 @@ export default function Home() {
                       <p className="whitespace-pre-line pr-6">
                         {msg.content}
                       </p>
-                      {msg.role === 'model' && (
-                        <button
-                          type="button"
-                          onClick={() => speakText(msg.content, index)}
-                          className={`absolute bottom-2 right-2 p-1.5 rounded-md transition-all ${
-                            isPlayingSpeech === index 
-                              ? 'bg-teal-500 text-slate-950' 
-                              : (isLightMode ? 'text-slate-400 hover:text-slate-600 hover:bg-slate-100' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800')
-                          }`}
-                          title="Đọc câu trả lời"
-                        >
-                          <Volume2 className="w-4 h-4" />
-                        </button>
-                      )}
+
                     </div>
                   </div>
                 ))}
@@ -1844,32 +1715,7 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Voice controls for accessibility */}
-              <div className={`px-4 py-3 border-t flex items-center justify-between gap-3 text-xs font-bold transition-all shrink-0 ${
-                isLightMode ? 'bg-slate-100/50 border-slate-200 text-slate-700' : 'bg-slate-900/30 border-slate-900 text-slate-400'
-              }`}>
-                {/* Auto read aloud switch */}
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">🗣️</span>
-                  <span>{lang === 'vi' ? 'Đọc thành tiếng tự động:' : 'Auto read aloud:'}</span>
-                  <button
-                    type="button"
-                    onClick={() => setAutoSpeak(!autoSpeak)}
-                    className={`px-3 py-1 border rounded-lg transition-all text-[11px] cursor-pointer min-h-[32px] ${
-                      autoSpeak 
-                        ? 'bg-teal-500 text-slate-950 border-teal-500 font-black' 
-                        : (isLightMode ? 'bg-slate-200 border-slate-300 text-slate-600' : 'bg-slate-800 border-slate-700 text-slate-400')
-                    }`}
-                  >
-                    {autoSpeak ? (lang === 'vi' ? 'BẬT' : 'ON') : (lang === 'vi' ? 'TẮT' : 'OFF')}
-                  </button>
-                </div>
 
-                {/* Voice command suggestion */}
-                <div className="hidden sm:block text-[11px] text-slate-400 italic">
-                  {lang === 'vi' ? 'Nói "Tôi đã uống paracetamol" hoặc chụp đơn thuốc' : 'Say "I took paracetamol" or snap a prescription'}
-                </div>
-              </div>
 
               {/* Chat Input Box */}
               <form onSubmit={handleSendMessage} className={`p-4 border-t flex gap-2 items-center transition-colors shrink-0 ${

@@ -8,7 +8,7 @@ Dự án này là bài tập lớn cuối khóa (Capstone Project) thuộc chư�
 
 ## ✨ Tính Năng Nổi Bật
 
-1. **Trợ lý Sức khỏe AI Đa nhiệm**: Tương tác bằng ngôn ngữ tự nhiên thông qua giao diện chat tiếng Việt cực kỳ thân thiện. Tích hợp khả năng chuyển văn bản thành giọng nói (TTS) để phát âm nhắc nhở.
+1. **Trợ lý Sức khỏe AI Đa nhiệm**: Tương tác bằng ngôn ngữ tự nhiên thông qua giao diện chat tiếng Việt cực kỳ thân thiện.
 2. **Kiểm tra Tương Tác Thuốc (MCP-OpenFDA)**: Tích hợp mô hình Model Context Protocol (MCP) nội bộ để tự động tra cứu dữ liệu từ OpenFDA và cảnh báo tương tác chéo nguy hiểm trước khi thêm lịch uống thuốc mới.
 3. **Quản lý Đơn Thuốc Bằng Hình Ảnh (OCR)**: Cho phép người dùng chụp ảnh đơn thuốc bằng camera hoặc tải ảnh lên. AI tự động trích xuất thông tin thuốc, liều lượng, tần suất và tự động lên lịch uống.
 4. **Theo dõi Tỷ lệ Tuân thủ (Adherence Streak)**: Tính toán chuỗi ngày tuân thủ thực tế của người dùng dựa trên tỷ lệ uống thuốc đúng hẹn đạt trên 80% mỗi ngày.
@@ -96,6 +96,21 @@ Mở trình duyệt truy cập vào [http://localhost:3000](http://localhost:300
 ```bash
 npm run build
 ```
+
+---
+
+## 👥 Tài Khoản Demo Khảo Sát (1-Click Login)
+
+Để thuận tiện cho việc chạy thử và đánh giá dự án mà không cần đăng ký tài khoản mới, hệ thống đã cài đặt sẵn 2 tài khoản demo trên cơ sở dữ liệu. Bạn có thể nhấn nút **Đăng Nhập Admin** hoặc **Đăng Nhập User** ở màn hình đăng nhập để tự động điền thông tin:
+
+*   **Tài khoản Quản trị (Admin Account)**:
+    *   **Email**: `admin@medimate.ai`
+    *   **Mật khẩu**: `admin123456`
+    *   *Tính năng*: Được cấp quyền truy cập **Tab Quản trị (Admin Portal)** để xem chỉ số toàn hệ thống, danh sách bệnh nhân và phát thông báo khẩn cấp.
+*   **Tài khoản Bệnh nhân (Standard User)**:
+    *   **Email**: `user@medimate.ai`
+    *   **Mật khẩu**: `user123456`
+    *   *Tính năng*: Quản lý thuốc cá nhân, đặt lịch, tương tác với AI Agent hỗ trợ phân tích đơn thuốc qua ảnh (OCR).
 
 ---
 
