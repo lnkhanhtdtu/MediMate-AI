@@ -531,8 +531,8 @@ export default function Home() {
   }, [user])
 
   // CRUD & Fetch Functions
-  const fetchMedications = async () => {
-    setLoadingMeds(true)
+  const fetchMedications = async (silent = false) => {
+    if (!silent) setLoadingMeds(true)
     try {
       const res = await fetch('/api/medications')
       const data = await res.json()
@@ -542,12 +542,12 @@ export default function Home() {
     } catch (e) {
       console.error(e)
     } finally {
-      setLoadingMeds(false)
+      if (!silent) setLoadingMeds(false)
     }
   }
 
-  const fetchTodayLogs = async () => {
-    setLoadingLogs(true)
+  const fetchTodayLogs = async (silent = false) => {
+    if (!silent) setLoadingLogs(true)
     try {
       const res = await fetch('/api/logs')
       const data = await res.json()
@@ -557,7 +557,7 @@ export default function Home() {
     } catch (e) {
       console.error(e)
     } finally {
-      setLoadingLogs(false)
+      if (!silent) setLoadingLogs(false)
     }
   }
 
@@ -581,8 +581,8 @@ export default function Home() {
     }
   }
 
-  const fetchAdminData = async () => {
-    setLoadingAdmin(true)
+  const fetchAdminData = async (silent = false) => {
+    if (!silent) setLoadingAdmin(true)
     try {
       const res = await fetch('/api/admin/users')
       const data = await res.json()
@@ -592,7 +592,7 @@ export default function Home() {
     } catch (e) {
       console.error('Error fetching admin data:', e)
     } finally {
-      setLoadingAdmin(false)
+      if (!silent) setLoadingAdmin(false)
     }
   }
 
@@ -622,8 +622,8 @@ export default function Home() {
         setNewMedDosage('')
         setNewMedDosageQty('1')
         setNewMedPrescriptionName('')
-        fetchMedications()
-        fetchTodayLogs()
+        fetchMedications(true)
+        fetchTodayLogs(true)
         
         // Add helper bot message
         setMessages((prev) => [
@@ -679,8 +679,8 @@ export default function Home() {
       if (res.ok) {
         setShowEditModal(false)
         setEditingMedication(null)
-        fetchMedications()
-        fetchTodayLogs()
+        fetchMedications(true)
+        fetchTodayLogs(true)
         
         setMessages((prev) => [
           ...prev,
@@ -704,8 +704,8 @@ export default function Home() {
         method: 'DELETE',
       })
       if (res.ok) {
-        fetchMedications()
-        fetchTodayLogs()
+        fetchMedications(true)
+        fetchTodayLogs(true)
       }
     } catch (e) {
       console.error(e)
@@ -721,11 +721,11 @@ export default function Home() {
         body: JSON.stringify({ logId, status: nextStatus }),
       })
       if (res.ok) {
-        fetchTodayLogs()
-        fetchMedications()
+        fetchTodayLogs(true)
+        fetchMedications(true)
         fetchStats()
         if (user?.email && (user.email.toLowerCase().includes('admin') || user.email === 'admin@medimate.ai')) {
-          fetchAdminData()
+          fetchAdminData(true)
         }
       }
     } catch (e) {
@@ -744,11 +744,11 @@ export default function Home() {
           })
         )
       )
-      fetchTodayLogs()
-      fetchMedications()
+      fetchTodayLogs(true)
+      fetchMedications(true)
       fetchStats()
       if (user?.email && (user.email.toLowerCase().includes('admin') || user.email === 'admin@medimate.ai')) {
-        fetchAdminData()
+        fetchAdminData(true)
       }
     } catch (e) {
       console.error(e)
@@ -766,11 +766,11 @@ export default function Home() {
           })
         )
       )
-      fetchTodayLogs()
-      fetchMedications()
+      fetchTodayLogs(true)
+      fetchMedications(true)
       fetchStats()
       if (user?.email && (user.email.toLowerCase().includes('admin') || user.email === 'admin@medimate.ai')) {
-        fetchAdminData()
+        fetchAdminData(true)
       }
       logsToMiss.forEach(log => {
         const timeStr = new Date(log.scheduled_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
@@ -883,8 +883,8 @@ export default function Home() {
         setMessages((prev) => [...prev, { role: 'model', content: data.message }])
         // Refresh local data in case medication or log was modified
         if (data.action === 'MEDICATION_ADDED' || data.action === 'LOG_RECORDED') {
-          fetchMedications()
-          fetchTodayLogs()
+          fetchMedications(true)
+          fetchTodayLogs(true)
         }
       }
     } catch (err) {
@@ -922,8 +922,8 @@ export default function Home() {
           },
         ])
         setWarningInfo(null)
-        fetchMedications()
-        fetchTodayLogs()
+        fetchMedications(true)
+        fetchTodayLogs(true)
       }
     } catch (e) {
       console.error(e)
@@ -1354,77 +1354,6 @@ export default function Home() {
                 )}
               </div>
 
-              {/* Streaks & Badges Dashboard Component (Moved to Bottom) */}
-              <div className="grid grid-cols-2 gap-4 shrink-0">
-                {/* Streak Card */}
-                <div className={`border rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden transition-all ${
-                  isLightMode ? 'bg-white border-slate-200/80 shadow-sm text-slate-800' : 'bg-slate-900/40 border-slate-900 text-slate-100'
-                }`}>
-                  <div className="absolute top-0 right-0 w-16 h-16 bg-orange-500/5 rounded-full blur-lg" />
-                  <div className="w-10 h-10 bg-orange-500/10 rounded-xl flex items-center justify-center text-xl">
-                    🔥
-                  </div>
-                  <div>
-                    <div className={`text-[10px] uppercase tracking-widest font-bold ${isLightMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                      {t.streak}
-                    </div>
-                    <div className="text-xl font-black text-orange-500">
-                      {streak} {lang === 'vi' ? 'Ngày Liên Tục' : 'Days Streak'}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Badge Card */}
-                <div className={`border rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden transition-all ${
-                  isLightMode ? 'bg-white border-slate-200/80 shadow-sm text-slate-800' : 'bg-slate-900/40 border-slate-900 text-slate-100'
-                }`}>
-                  <div className="absolute top-0 right-0 w-16 h-16 bg-indigo-500/5 rounded-full blur-lg" />
-                  <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-500">
-                    <Award className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className={`text-[10px] uppercase tracking-widest font-bold ${isLightMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                      {t.badges}
-                    </div>
-                    <div className="text-xl font-black text-indigo-500">
-                      {badges.length} / 4
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Badges List (Horizontal Scroll) */}
-              {badges.length > 0 && (
-                <div className={`border rounded-2xl p-4 shrink-0 transition-all ${
-                  isLightMode ? 'bg-white border-slate-200/80 shadow-sm' : 'bg-slate-900/20 border-slate-900/60'
-                }`}>
-                  <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">
-                    Huy hiệu mở khoá
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {badges.includes('Chiến binh mới') && (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 bg-teal-500/10 border border-teal-500/30 text-teal-600 rounded-lg">
-                        🛡️ Chiến binh mới
-                      </span>
-                    )}
-                    {badges.includes('Kỷ luật thép') && (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-600 rounded-lg">
-                        🔥 Kỷ luật thép
-                      </span>
-                    )}
-                    {badges.includes('Tương tác an toàn') && (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 bg-indigo-500/10 border border-indigo-500/30 text-indigo-600 rounded-lg">
-                        🔒 Tương tác an toàn
-                      </span>
-                    )}
-                    {badges.includes('Trợ lý đắc lực') && (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 bg-pink-500/10 border border-pink-500/30 text-pink-600 rounded-lg">
-                        🎙️ Trợ lý đắc lực
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
 
               {/* Medication Management List */}
               <div className={`border rounded-2xl p-6 flex flex-col shrink-0 transition-all ${
@@ -1856,7 +1785,7 @@ export default function Home() {
                     </p>
                   </div>
                   <button
-                    onClick={fetchAdminData}
+                    onClick={() => fetchAdminData()}
                     disabled={loadingAdmin}
                     className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-teal-500/30 text-teal-400 rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5"
                   >
