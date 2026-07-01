@@ -342,6 +342,14 @@ export default function Home() {
     ])
   }
 
+  const handleSaveCaregiverSettings = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('medimate_caregiverName', caregiverName)
+      localStorage.setItem('medimate_caregiverEmail', caregiverEmail)
+    }
+    setShowCaregiverModal(false)
+  }
+
   // Handle Mark as Missed log
   const handleMarkAsMissed = async (logId: string, medName: string, timeStr: string) => {
     try {
@@ -515,19 +523,63 @@ export default function Home() {
     }
   }
 
-  // Preload synthesis voices on startup
+  // Preload synthesis voices and restore client settings from localStorage on startup
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.getVoices()
-      const handleVoicesChanged = () => {
-        window.speechSynthesis.getVoices()
+    if (typeof window !== 'undefined') {
+      // 1. Restoring UI Preferences & Caregiver Details
+      const savedLang = localStorage.getItem('medimate_lang')
+      if (savedLang === 'vi' || savedLang === 'en') setLang(savedLang)
+
+      const savedMode = localStorage.getItem('medimate_isLightMode')
+      if (savedMode !== null) setIsLightMode(savedMode === 'true')
+
+      const savedCaregiverName = localStorage.getItem('medimate_caregiverName')
+      if (savedCaregiverName) setCaregiverName(savedCaregiverName)
+
+      const savedCaregiverEmail = localStorage.getItem('medimate_caregiverEmail')
+      if (savedCaregiverEmail) setCaregiverEmail(savedCaregiverEmail)
+
+      const savedCaregiverAlerts = localStorage.getItem('medimate_caregiverAlerts')
+      if (savedCaregiverAlerts) {
+        try {
+          setCaregiverAlerts(JSON.parse(savedCaregiverAlerts))
+        } catch (_) {}
       }
-      window.speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged)
-      return () => {
-        window.speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged)
+
+      // 2. TTS Voice preloading
+      if (window.speechSynthesis) {
+        window.speechSynthesis.getVoices()
+        const handleVoicesChanged = () => {
+          window.speechSynthesis.getVoices()
+        }
+        window.speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged)
+        return () => {
+          window.speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged)
+        }
       }
     }
   }, [])
+
+  // Persist language to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('medimate_lang', lang)
+    }
+  }, [lang])
+
+  // Persist light mode theme to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('medimate_isLightMode', isLightMode ? 'true' : 'false')
+    }
+  }, [isLightMode])
+
+  // Persist caregiver alerts to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('medimate_caregiverAlerts', JSON.stringify(caregiverAlerts))
+    }
+  }, [caregiverAlerts])
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -2509,7 +2561,7 @@ export default function Home() {
 
                   <button
                     type="button"
-                    onClick={() => setShowCaregiverModal(false)}
+                    onClick={handleSaveCaregiverSettings}
                     className="w-full bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg text-sm cursor-pointer min-h-[48px] flex items-center justify-center"
                   >
                     Lưu Cấu Hình
