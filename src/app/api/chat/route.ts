@@ -8,6 +8,19 @@ import {
   updateLogStatus,
 } from '@/services/medicationService'
 
+function safeParseJson<T>(text: string | undefined | null): T | null {
+  if (!text) return null
+  let s = text.trim()
+  if (s.startsWith('```')) {
+    s = s.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+  }
+  try {
+    return JSON.parse(s) as T
+  } catch {
+    return null
+  }
+}
+
 export async function POST(request: Request) {
   try {
     // 1. Authenticate user using Supabase Auth
@@ -132,9 +145,17 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
     // Process image base64 if provided
     let contentParts: any[] = [activeMessage]
     if (image && image.data && image.mimeType) {
+      const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp']
+      const MAX_IMAGE_BYTES = 5 * 1024 * 1024 // 5MB
+      if (!ALLOWED_MIME.includes(image.mimeType)) {
+        return NextResponse.json({ error: 'Định dạng ảnh không được hỗ trợ. Vui lòng gửi ảnh PNG, JPEG hoặc WEBP.' }, { status: 415 })
+      }
       let base64Data = image.data
       if (base64Data.includes(';base64,')) {
         base64Data = base64Data.split(';base64,')[1]
+      }
+      if (Buffer.byteLength(base64Data, 'base64') > MAX_IMAGE_BYTES) {
+        return NextResponse.json({ error: 'Ảnh vượt quá dung lượng tối đa 5MB.' }, { status: 413 })
       }
       contentParts.push({
         inlineData: {
@@ -154,7 +175,13 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
       },
     })
 
-    const nluResult = JSON.parse(response.text || '{}')
+    const nluResult = safeParseJson<any>(response.text)
+    if (!nluResult || !nluResult.action) {
+      return NextResponse.json({
+        action: 'CHAT_RESPONSE',
+        message: 'Xin lỗi, tôi chưa hiểu rõ yêu cầu của bạn. Bạn vui lòng nói rõ hơn về tên thuốc và liều lượng nhé.',
+      })
+    }
 
     // 5. Handle Action: ADD_MEDICATION
     if (nluResult.action === 'ADD_MEDICATION' && Array.isArray(nluResult.medication_details) && nluResult.medication_details.length > 0) {
@@ -186,7 +213,10 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
           try {
             const mcpRes = await fetch(mcpUrl, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 
+                'Content-Type': 'application/json',
+                'Cookie': request.headers.get('cookie') || '',
+              },
               body: JSON.stringify({
                 jsonrpc: '2.0',
                 method: 'tools/call',
@@ -237,7 +267,7 @@ Hãy trả về phản hữu JSON theo định dạng sau:
               },
             })
 
-            const checkResult = JSON.parse(checkResponse.text || '{}')
+            const checkResult = safeParseJson<any>(checkResponse.text) || { has_interaction: false, severity: 'none', explanation: '' }
 
             if (checkResult.has_interaction && (checkResult.severity === 'high' || checkResult.severity === 'medium')) {
               warnings.push({
@@ -256,9 +286,9 @@ Hãy trả về phản hữu JSON theo định dạng sau:
           dosage: newMed.dosage,
           frequency: newMed.frequency,
           schedule: newMed.schedule,
-          total_stock: newMed.total_stock || null,
-          remaining_stock: newMed.total_stock || null,
-          dosage_quantity: newMed.dosage_quantity || 1,
+          total_stock: newMed.total_stock ?? null,
+          remaining_stock: newMed.total_stock ?? null,
+          dosage_quantity: newMed.dosage_quantity ?? 1,
           prescription_name: newMed.prescription_name || defaultPrescriptionName,
         })
         if (saved) {

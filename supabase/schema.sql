@@ -9,6 +9,10 @@ CREATE TABLE IF NOT EXISTS public.medications (
     dosage TEXT NOT NULL,
     frequency TEXT NOT NULL,
     schedule JSONB NOT NULL DEFAULT '[]'::jsonb, -- e.g., ["08:00", "20:00"]
+    prescription_name TEXT,
+    total_stock NUMERIC,
+    remaining_stock NUMERIC,
+    dosage_quantity NUMERIC DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -63,10 +67,16 @@ CREATE POLICY "Users can view their own medication logs"
     FOR SELECT 
     USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert their own medication logs" 
+CREATE POLICY "Users can insert their own medication logs referencing their own medications" 
     ON public.medication_logs 
     FOR INSERT 
-    WITH CHECK (auth.uid() = user_id);
+    WITH CHECK (
+        auth.uid() = user_id
+        AND EXISTS (
+            SELECT 1 FROM public.medications
+            WHERE id = medication_id AND user_id = auth.uid()
+        )
+    );
 
 CREATE POLICY "Users can update their own medication logs" 
     ON public.medication_logs 
@@ -78,3 +88,33 @@ CREATE POLICY "Users can delete their own medication logs"
     ON public.medication_logs 
     FOR DELETE 
     USING (auth.uid() = user_id);
+
+-- 6. Trigger to auto-decrement stock when log is marked as taken (NUMERIC-safe)
+CREATE OR REPLACE FUNCTION public.handle_medication_log_status_change()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_qty NUMERIC;
+    v_total NUMERIC;
+BEGIN
+    SELECT COALESCE(dosage_quantity, 1.0), total_stock INTO v_qty, v_total
+    FROM public.medications
+    WHERE id = NEW.medication_id;
+
+    IF NEW.status = 'taken' AND (OLD.status IS NULL OR OLD.status != 'taken') THEN
+        UPDATE public.medications
+        SET remaining_stock = GREATEST(0.0, remaining_stock - v_qty)
+        WHERE id = NEW.medication_id AND remaining_stock IS NOT NULL;
+    ELSIF NEW.status != 'taken' AND OLD.status = 'taken' THEN
+        UPDATE public.medications
+        SET remaining_stock = LEAST(COALESCE(v_total, 100.0), remaining_stock + v_qty)
+        WHERE id = NEW.medication_id AND remaining_stock IS NOT NULL;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_medication_log_status_change ON public.medication_logs;
+CREATE TRIGGER on_medication_log_status_change
+    AFTER INSERT OR UPDATE ON public.medication_logs
+    FOR EACH ROW
+    EXECUTE FUNCTION public.handle_medication_log_status_change();

@@ -25,7 +25,9 @@ import {
   Award,
   Bell,
   FileText,
-  Pencil
+  Pencil,
+  ShieldAlert,
+  Users
 } from 'lucide-react'
 
 // Interfaces
@@ -221,6 +223,7 @@ export default function Home() {
   const t = translations[lang]
 
   const [user, setUser] = useState<any>(null)
+  const isAdmin = user && user.email && (user.email.toLowerCase().includes('admin') || user.email === 'admin@medimate.ai')
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login')
@@ -265,7 +268,7 @@ export default function Home() {
   const [editMedPrescriptionName, setEditMedPrescriptionName] = useState('')
 
   // UI & Feature States
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'chat'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'chat' | 'admin'>('dashboard')
   const [isListening, setIsListening] = useState(false)
   const [isPlayingSpeech, setIsPlayingSpeech] = useState<number | null>(null)
   const [selectedImage, setSelectedImage] = useState<{ data: string; mimeType: string } | null>(null)
@@ -274,6 +277,29 @@ export default function Home() {
   const [showCaregiverModal, setShowCaregiverModal] = useState(false)
   const [caregiverAlerts, setCaregiverAlerts] = useState<string[]>([])
   const [badges, setBadges] = useState<string[]>([])
+
+  // Admin & Stats States
+  const [streak, setStreak] = useState<number>(0)
+  const [adminData, setAdminData] = useState<{
+    stats: {
+      totalUsers: number
+      totalMeds: number
+      totalLogs: number
+      complianceRate: number
+    }
+    users: Array<{
+      id: string
+      email: string
+      created_at: string
+      medCount: number
+      todayLogs: { taken: number; total: number }
+      streak: number
+      medications: any[]
+    }>
+  } | null>(null)
+  const [loadingAdmin, setLoadingAdmin] = useState(false)
+  const [selectedAdminUser, setSelectedAdminUser] = useState<any | null>(null)
+  const [broadcastMessage, setBroadcastMessage] = useState('')
 
   const imageInputRef = useRef<HTMLInputElement>(null)
 
@@ -408,6 +434,18 @@ export default function Home() {
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
+      const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp']
+      const MAX_SIZE = 5 * 1024 * 1024 // 5MB
+      if (!ALLOWED_MIME.includes(file.type)) {
+        alert(lang === 'vi' ? 'Định dạng ảnh không được hỗ trợ. Vui lòng gửi ảnh PNG, JPEG hoặc WEBP.' : 'Unsupported format. Please send a PNG, JPEG, or WEBP image.')
+        if (imageInputRef.current) imageInputRef.current.value = ''
+        return
+      }
+      if (file.size > MAX_SIZE) {
+        alert(lang === 'vi' ? 'Ảnh vượt quá dung lượng tối đa 5MB.' : 'Image size exceeds the 5MB limit.')
+        if (imageInputRef.current) imageInputRef.current.value = ''
+        return
+      }
       const reader = new FileReader()
       reader.onloadend = () => {
         const base64String = reader.result as string
@@ -420,10 +458,7 @@ export default function Home() {
     }
   }
 
-  const calculateStreak = () => {
-    const takenLogsCount = logs.filter((l) => l.status === 'taken').length
-    return takenLogsCount > 0 ? 3 : 2
-  }
+
 
   // Warning Interaction State
   const [warningInfo, setWarningInfo] = useState<{
@@ -472,9 +507,15 @@ export default function Home() {
     if (user) {
       fetchMedications()
       fetchTodayLogs()
+      fetchStats()
+      if (user.email && (user.email.toLowerCase().includes('admin') || user.email === 'admin@medimate.ai')) {
+        fetchAdminData()
+      }
     } else {
       setMedications([])
       setLogs([])
+      setStreak(0)
+      setAdminData(null)
     }
   }, [user])
 
@@ -506,6 +547,33 @@ export default function Home() {
       console.error(e)
     } finally {
       setLoadingLogs(false)
+    }
+  }
+
+  const fetchStats = async () => {
+    try {
+      const res = await fetch('/api/stats')
+      const data = await res.json()
+      if (data && typeof data.streak === 'number') {
+        setStreak(data.streak)
+      }
+    } catch (e) {
+      console.error('Error fetching stats:', e)
+    }
+  }
+
+  const fetchAdminData = async () => {
+    setLoadingAdmin(true)
+    try {
+      const res = await fetch('/api/admin/users')
+      const data = await res.json()
+      if (data && data.users) {
+        setAdminData(data)
+      }
+    } catch (e) {
+      console.error('Error fetching admin data:', e)
+    } finally {
+      setLoadingAdmin(false)
     }
   }
 
@@ -636,6 +704,10 @@ export default function Home() {
       if (res.ok) {
         fetchTodayLogs()
         fetchMedications()
+        fetchStats()
+        if (user?.email && (user.email.toLowerCase().includes('admin') || user.email === 'admin@medimate.ai')) {
+          fetchAdminData()
+        }
       }
     } catch (e) {
       console.error(e)
@@ -655,6 +727,10 @@ export default function Home() {
       )
       fetchTodayLogs()
       fetchMedications()
+      fetchStats()
+      if (user?.email && (user.email.toLowerCase().includes('admin') || user.email === 'admin@medimate.ai')) {
+        fetchAdminData()
+      }
     } catch (e) {
       console.error(e)
     }
@@ -673,6 +749,10 @@ export default function Home() {
       )
       fetchTodayLogs()
       fetchMedications()
+      fetchStats()
+      if (user?.email && (user.email.toLowerCase().includes('admin') || user.email === 'admin@medimate.ai')) {
+        fetchAdminData()
+      }
       logsToMiss.forEach(log => {
         const timeStr = new Date(log.scheduled_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
         triggerCaregiverEscalation(log.medication?.name || 'Thuốc', timeStr)
@@ -961,6 +1041,20 @@ export default function Home() {
                 <span>{lang === 'vi' ? 'VI' : 'EN'}</span>
               </button>
 
+              {isAdmin && (
+                <button
+                  onClick={() => setActiveTab(activeTab === 'admin' ? 'dashboard' : 'admin')}
+                  className={`hidden md:flex px-3 py-1.5 border rounded-xl text-xs font-semibold items-center gap-1.5 cursor-pointer transition-all ${
+                    activeTab === 'admin' 
+                      ? 'bg-teal-500/20 border-teal-500 text-teal-400' 
+                      : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-teal-500/30'
+                  }`}
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" />
+                  <span>{lang === 'vi' ? 'Quản trị' : 'Admin'}</span>
+                </button>
+              )}
+
               <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-full text-xs">
                 <UserIcon className="w-3.5 h-3.5 text-slate-400" />
                 <span className="text-slate-300 font-medium">{user.email}</span>
@@ -980,7 +1074,7 @@ export default function Home() {
           <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
             
             {/* Left Panel: Dashboard (50%) */}
-            <section className={`flex-1 md:max-w-[50%] border-r border-slate-900 flex flex-col overflow-y-auto p-6 space-y-6 pb-24 md:pb-6 ${activeTab === 'dashboard' ? 'flex' : 'hidden md:flex'}`}>
+            <section className={`flex-1 md:max-w-[50%] border-r border-slate-900 flex flex-col overflow-y-auto p-6 space-y-6 pb-24 md:pb-6 ${activeTab === 'dashboard' ? 'flex' : (activeTab === 'admin' ? 'hidden' : 'hidden md:flex')}`}>
               
               {/* Streaks & Badges Dashboard Component */}
               <div className="grid grid-cols-2 gap-4 shrink-0">
@@ -995,7 +1089,7 @@ export default function Home() {
                       {t.streak}
                     </div>
                     <div className="text-xl font-black text-orange-400">
-                      {calculateStreak()} {lang === 'vi' ? 'Ngày Liên Tục' : 'Days Streak'}
+                      {streak} {lang === 'vi' ? 'Ngày Liên Tục' : 'Days Streak'}
                     </div>
                   </div>
                 </div>
@@ -1406,7 +1500,7 @@ export default function Home() {
             </section>
 
             {/* Right Panel: Chat Interface (50%) */}
-            <section className={`flex-1 md:max-w-[50%] flex flex-col bg-slate-950/40 overflow-hidden relative pb-20 md:pb-0 ${activeTab === 'chat' ? 'flex' : 'hidden md:flex'}`}>
+            <section className={`flex-1 md:max-w-[50%] flex flex-col bg-slate-950/40 overflow-hidden relative pb-20 md:pb-0 ${activeTab === 'chat' ? 'flex' : (activeTab === 'admin' ? 'hidden' : 'hidden md:flex')}`}>
               
               {/* Chat Title / Agent Indicator */}
               <div className="px-6 py-4 border-b border-slate-900 flex items-center justify-between bg-slate-950/20">
@@ -1582,6 +1676,179 @@ export default function Home() {
 
             </section>
 
+            {/* Admin Portal (Full Width) */}
+            {activeTab === 'admin' && isAdmin && (
+              <section className="flex-1 flex flex-col overflow-y-auto p-6 space-y-6 pb-24 md:pb-6 bg-slate-950/20">
+                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                  <div>
+                    <h2 className="text-2xl font-black text-slate-100 flex items-center gap-2">
+                      <ShieldAlert className="w-6 h-6 text-teal-400" />
+                      {lang === 'vi' ? 'Quản trị Hệ thống' : 'System Administration'}
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1">
+                      {lang === 'vi' ? 'Xem thống kê toàn hệ thống, giám sát tuân thủ và hỗ trợ người dùng.' : 'View system metrics, monitor patient adherence, and support users.'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={fetchAdminData}
+                    disabled={loadingAdmin}
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-teal-500/30 text-teal-400 rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5"
+                  >
+                    <RotateCcw className={`w-3.5 h-3.5 ${loadingAdmin ? 'animate-spin' : ''}`} />
+                    {lang === 'vi' ? 'Làm mới dữ liệu' : 'Refresh Data'}
+                  </button>
+                </div>
+
+                {/* System Stats Overview */}
+                {adminData && (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden">
+                      <div className="w-10 h-10 bg-teal-500/10 rounded-xl flex items-center justify-center text-teal-400">
+                        <Users className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                          {lang === 'vi' ? 'Người dùng' : 'Active Users'}
+                        </div>
+                        <div className="text-xl font-black text-teal-300">
+                          {adminData.stats.totalUsers}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden">
+                      <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400">
+                        <Activity className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                          {lang === 'vi' ? 'Đơn thuốc' : 'Medications'}
+                        </div>
+                        <div className="text-xl font-black text-indigo-300">
+                          {adminData.stats.totalMeds}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden">
+                      <div className="w-10 h-10 bg-orange-500/10 rounded-xl flex items-center justify-center text-orange-400">
+                        <CheckCircle className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                          {lang === 'vi' ? 'Lượt uống hôm nay' : 'Logs Today'}
+                        </div>
+                        <div className="text-xl font-black text-orange-300">
+                          {adminData.stats.totalLogs}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden">
+                      <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">
+                        <Award className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                          {lang === 'vi' ? 'Tỷ lệ tuân thủ' : 'Adherence Rate'}
+                        </div>
+                        <div className="text-xl font-black text-emerald-300">
+                          {adminData.stats.complianceRate}%
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Users List Table */}
+                <div className="bg-slate-900/30 border border-slate-900 rounded-2xl p-6 space-y-4">
+                  <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">
+                    {lang === 'vi' ? 'Danh sách bệnh nhân' : 'Patient Adherence Directory'}
+                  </h3>
+                  {loadingAdmin ? (
+                    <div className="py-12 flex justify-center items-center text-sm text-slate-400 gap-2">
+                      <div className="w-4 h-4 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
+                      {lang === 'vi' ? 'Đang tải danh sách người dùng...' : 'Loading patient directory...'}
+                    </div>
+                  ) : adminData && adminData.users.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider font-bold">
+                            <th className="py-3 px-4">{lang === 'vi' ? 'Bệnh nhân' : 'Patient Email'}</th>
+                            <th className="py-3 px-4">{lang === 'vi' ? 'Ngày tham gia' : 'Joined Date'}</th>
+                            <th className="py-3 px-4 text-center">{lang === 'vi' ? 'Số thuốc' : 'Medications'}</th>
+                            <th className="py-3 px-4 text-center">{lang === 'vi' ? 'Nhật ký hôm nay' : 'Today Adherence'}</th>
+                            <th className="py-3 px-4 text-center">{lang === 'vi' ? 'Chuỗi ngày' : 'Streak'}</th>
+                            <th className="py-3 px-4 text-right">{lang === 'vi' ? 'Hành động' : 'Actions'}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {adminData.users.map((item) => (
+                            <tr key={item.id} className="border-b border-slate-800/50 hover:bg-slate-900/10 text-slate-300">
+                              <td className="py-3 px-4 font-medium max-w-[200px] truncate">{item.email}</td>
+                              <td className="py-3 px-4 text-xs text-slate-500">
+                                {new Date(item.created_at).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US')}
+                              </td>
+                              <td className="py-3 px-4 text-center font-semibold text-indigo-400">{item.medCount}</td>
+                              <td className="py-3 px-4 text-center">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                  item.todayLogs.total === 0 
+                                    ? 'bg-slate-800 text-slate-400' 
+                                    : (item.todayLogs.taken === item.todayLogs.total ? 'bg-emerald-500/10 text-emerald-400' : 'bg-orange-500/10 text-orange-400')
+                                }`}>
+                                  {item.todayLogs.taken} / {item.todayLogs.total}
+                                </span>
+                              </td>
+                              <td className="py-3 px-4 text-center">
+                                <span className="font-bold text-orange-400">🔥 {item.streak}</span>
+                              </td>
+                              <td className="py-3 px-4 text-right">
+                                <button
+                                  onClick={() => setSelectedAdminUser(item)}
+                                  className="px-3 py-1 bg-slate-900 border border-slate-800 hover:border-teal-500/40 text-teal-400 rounded-lg text-xs font-semibold cursor-pointer transition-all"
+                                >
+                                  {lang === 'vi' ? 'Xem lịch thuốc' : 'View Schedule'}
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="py-8 text-center text-sm text-slate-500">
+                      {lang === 'vi' ? 'Chưa có người dùng nào.' : 'No users found.'}
+                    </div>
+                  )}
+                </div>
+
+                {/* Announcement Broadcast Section */}
+                <div className="bg-slate-900/30 border border-slate-900 rounded-2xl p-6 space-y-4">
+                  <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                    <Bell className="w-4 h-4 text-orange-400" />
+                    {lang === 'vi' ? 'Phát thông báo hệ thống' : 'System-Wide Broadcast Alerts'}
+                  </h3>
+                  <div className="flex gap-3">
+                    <input
+                      type="text"
+                      value={broadcastMessage}
+                      onChange={(e) => setBroadcastMessage(e.target.value)}
+                      placeholder={lang === 'vi' ? 'Nhập nội dung thông báo khẩn cấp...' : 'Enter message to broadcast...'}
+                      className="flex-grow bg-slate-900/50 border border-slate-900 focus:border-teal-500 rounded-xl px-4 py-3 text-sm focus:outline-none transition-colors text-slate-200"
+                    />
+                    <button
+                      onClick={() => {
+                        if (!broadcastMessage.trim()) return
+                        alert(lang === 'vi' ? `Đã phát thông báo: "${broadcastMessage}" tới tất cả người dùng!` : `Broadcasted: "${broadcastMessage}" to all users!`)
+                        setBroadcastMessage('')
+                      }}
+                      className="px-5 py-3 bg-gradient-to-r from-orange-400 to-orange-500 hover:from-orange-500 hover:to-orange-600 text-slate-950 font-bold rounded-xl transition-all shadow-md cursor-pointer text-sm"
+                    >
+                      {lang === 'vi' ? 'Gửi' : 'Send'}
+                    </button>
+                  </div>
+                </div>
+              </section>
+            )}
+
           </main>
 
           {/* Mobile Bottom Navigation Bar */}
@@ -1610,6 +1877,17 @@ export default function Home() {
               </div>
               <span className="text-[10px]">Trợ lý AI</span>
             </button>
+            {isAdmin && (
+              <button
+                onClick={() => setActiveTab('admin')}
+                className={`flex flex-col items-center justify-center gap-1 transition-colors ${
+                  activeTab === 'admin' ? 'text-teal-400 font-bold' : 'text-slate-400 hover:text-slate-300'
+                }`}
+              >
+                <ShieldAlert className="w-5 h-5" />
+                <span className="text-[10px]">Quản trị</span>
+              </button>
+            )}
           </div>
 
           {/* Manual Add Medication Modal */}
@@ -1942,9 +2220,72 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setShowCaregiverModal(false)}
-                    className="w-full bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-slate-955 font-bold py-3 rounded-xl transition-all shadow-lg text-sm"
+                    className="w-full bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg text-sm"
                   >
                     Lưu Cấu Hình
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Admin view user medication schedule modal */}
+          {selectedAdminUser && (
+            <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+              <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative max-h-[85vh] flex flex-col">
+                
+                <button
+                  onClick={() => setSelectedAdminUser(null)}
+                  className="absolute top-4 right-4 text-slate-400 hover:text-slate-200"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+
+                <h3 className="text-lg font-bold mb-2 flex items-center gap-2 border-b border-slate-800 pb-3">
+                  <FileText className="w-5 h-5 text-indigo-400" />
+                  <span>{lang === 'vi' ? 'Chi tiết lịch thuốc' : 'Patient Medication Schedule'}</span>
+                </h3>
+
+                <p className="text-xs text-slate-400 mb-4 font-semibold">
+                  {lang === 'vi' ? `Tài khoản: ${selectedAdminUser.email}` : `Account: ${selectedAdminUser.email}`}
+                </p>
+
+                <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+                  {selectedAdminUser.medications && selectedAdminUser.medications.length > 0 ? (
+                    selectedAdminUser.medications.map((med: any) => (
+                      <div key={med.id || med.name} className="p-4 bg-slate-950/40 border border-slate-800 rounded-xl space-y-1.5">
+                        <div className="flex items-start justify-between">
+                          <h4 className="font-bold text-slate-200">{med.name}</h4>
+                          <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 rounded-md text-[10px] font-bold">
+                            {med.dosage}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
+                          <span>⏱️ {med.frequency}</span>
+                          <span>📦 {lang === 'vi' ? `Còn lại: ${med.remaining_stock ?? med.total_stock ?? 'N/A'}` : `Remaining: ${med.remaining_stock ?? med.total_stock ?? 'N/A'}`}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {med.schedule && med.schedule.map((time: string) => (
+                            <span key={time} className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded-md text-[10px] text-slate-300">
+                              🕒 {time}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-slate-500 text-center py-6">
+                      {lang === 'vi' ? 'Không có thuốc nào được đăng ký.' : 'No medications registered.'}
+                    </p>
+                  )}
+                </div>
+
+                <div className="pt-4 border-t border-slate-800 mt-4 flex justify-end">
+                  <button
+                    onClick={() => setSelectedAdminUser(null)}
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+                  >
+                    {lang === 'vi' ? 'Đóng' : 'Close'}
                   </button>
                 </div>
               </div>

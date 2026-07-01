@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { createClient } from '@/utils/supabase/server'
 
 // Interface for OpenFDA label result
 interface DrugLabelInfo {
@@ -9,7 +10,7 @@ interface DrugLabelInfo {
   warnings: string | null
 }
 
-// Fetch drug label from OpenFDA
+// Fetch drug label from OpenFDA with timeout
 async function fetchDrugLabel(drugName: string): Promise<DrugLabelInfo | null> {
   // We search in brand_name, generic_name, and active_ingredient
   const url = `https://api.fda.gov/drug/label.json?search=openfda.brand_name:"${encodeURIComponent(
@@ -19,7 +20,7 @@ async function fetchDrugLabel(drugName: string): Promise<DrugLabelInfo | null> {
   )}"+OR+active_ingredient:"${encodeURIComponent(drugName)}"`
 
   try {
-    const res = await fetch(url)
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
     if (!res.ok) {
       console.warn(`OpenFDA returned status ${res.status} for drug: ${drugName}`)
       return null
@@ -51,11 +52,20 @@ async function fetchDrugLabel(drugName: string): Promise<DrugLabelInfo | null> {
 }
 
 export async function POST(request: Request) {
+  let id: any = null
   try {
-    const body = await request.json()
-    const { method, params, id } = body
+    // 1. Authenticate user
+    const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-    // 1. List tools method
+    const body = await request.json()
+    id = body?.id
+    const { method, params } = body
+
+    // 2. List tools method
     if (method === 'tools/list') {
       return NextResponse.json({
         jsonrpc: '2.0',
@@ -84,12 +94,12 @@ export async function POST(request: Request) {
       })
     }
 
-    // 2. Call tool method
+    // 3. Call tool method
     if (method === 'tools/call') {
       const { name, arguments: args } = params
 
       if (name === 'check_drug_interaction') {
-        const drugs: string[] = args.drugs || []
+        const drugs: string[] = args?.drugs || []
 
         if (drugs.length < 2) {
           return NextResponse.json({
@@ -105,6 +115,37 @@ export async function POST(request: Request) {
             },
             id,
           })
+        }
+
+        // Limit the number of drugs to prevent DoS amplification
+        if (drugs.length > 10) {
+          return NextResponse.json({
+            jsonrpc: '2.0',
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: 'Tối đa 10 loại thuốc mỗi lần kiểm tra.',
+                },
+              ],
+              isError: true,
+            },
+            id,
+          })
+        }
+
+        // Limit the length of drug names
+        for (const drug of drugs) {
+          if (typeof drug !== 'string' || drug.length > 100) {
+            return NextResponse.json({
+              jsonrpc: '2.0',
+              error: {
+                code: -32602,
+                message: 'Tên thuốc không hợp lệ hoặc quá dài (tối đa 100 ký tự).'
+              },
+              id
+            })
+          }
         }
 
         // Fetch labels for all drugs concurrently
@@ -186,6 +227,7 @@ export async function POST(request: Request) {
         code: -32603,
         message: error.message || 'Internal server error.',
       },
+      id,
     })
   }
 }

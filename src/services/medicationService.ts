@@ -268,3 +268,78 @@ export async function updateMedication(
   return data
 }
 
+export async function getComplianceStreak(): Promise<number> {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    return 0
+  }
+
+  // Get all logs for this user for the last 30 days
+  const end = new Date()
+  end.setHours(23, 59, 59, 999)
+  const start = new Date()
+  start.setDate(start.getDate() - 30)
+  start.setHours(0, 0, 0, 0)
+
+  const { data: logs, error } = await supabase
+    .from('medication_logs')
+    .select('*, medication:medications(*)')
+    .eq('user_id', user.id)
+    .gte('scheduled_time', start.toISOString())
+    .lte('scheduled_time', end.toISOString())
+    .order('scheduled_time', { ascending: false })
+
+  if (error || !logs || logs.length === 0) {
+    return 0
+  }
+
+  // Group logs by day (YYYY-MM-DD)
+  const logsByDay = new Map<string, typeof logs>()
+  for (const log of logs) {
+    const dateStr = new Date(log.scheduled_time).toLocaleDateString('en-CA') // YYYY-MM-DD
+    if (!logsByDay.has(dateStr)) {
+      logsByDay.set(dateStr, [])
+    }
+    logsByDay.get(dateStr)!.push(log)
+  }
+
+  let streak = 0
+  const cursor = new Date() // Start from today
+  
+  while (true) {
+    const dateStr = cursor.toLocaleDateString('en-CA')
+    const dayLogs = logsByDay.get(dateStr)
+
+    if (!dayLogs || dayLogs.length === 0) {
+      // If cursor is today and there are no logs today, look at yesterday
+      const todayStr = new Date().toLocaleDateString('en-CA')
+      if (dateStr === todayStr) {
+        cursor.setDate(cursor.getDate() - 1)
+        continue
+      }
+      break
+    }
+
+    const total = dayLogs.length
+    const taken = dayLogs.filter((l) => l.status === 'taken').length
+    const takenRatio = total > 0 ? taken / total : 0
+
+    if (takenRatio >= 0.8) {
+      streak++
+      cursor.setDate(cursor.getDate() - 1)
+    } else {
+      // If today has pending scheduled logs, don't break the streak yet, check yesterday
+      const todayStr = new Date().toLocaleDateString('en-CA')
+      const hasPending = dayLogs.some((l) => l.status === 'scheduled')
+      if (dateStr === todayStr && hasPending) {
+        cursor.setDate(cursor.getDate() - 1)
+        continue
+      }
+      break
+    }
+  }
+
+  return streak
+}
+
