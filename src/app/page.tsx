@@ -399,38 +399,122 @@ export default function Home() {
     }
   }
 
-  // Text-to-Speech (Speech Synthesis)
+  // Text-to-Speech (Google TTS with Web Speech API Fallback)
   const speakText = (text: string, index: number) => {
     if (typeof window !== 'undefined') {
+      const cleanText = text.replace(/[*_#`~[\]()]/g, '')
+
+      // If clicked again on the playing one, stop it
       if (isPlayingSpeech === index) {
+        if ((window as any).activeAudio) {
+          try {
+            (window as any).activeAudio.pause()
+          } catch (_) {}
+          (window as any).activeAudio = null
+        }
         window.speechSynthesis.cancel()
         setIsPlayingSpeech(null)
         return
       }
 
+      // Cancel any current playbacks
+      if ((window as any).activeAudio) {
+        try {
+          (window as any).activeAudio.pause()
+        } catch (_) {}
+        (window as any).activeAudio = null
+      }
       window.speechSynthesis.cancel()
-      const cleanText = text.replace(/[*_#`~[\]()]/g, '')
-      const utterance = new SpeechSynthesisUtterance(cleanText)
-      utterance.lang = 'vi-VN'
 
-      const voices = window.speechSynthesis.getVoices()
-      const viVoice = voices.find((v) => v.lang.includes('vi'))
-      if (viVoice) {
-        utterance.voice = viVoice
+      // 1. Try Google Translate TTS for a perfect native Vietnamese voice
+      try {
+        const chunks: string[] = []
+        // Split by sentence punctuation to respect the 200 character API limit
+        const sentences = cleanText.match(/[^.!?\n]+[.!?\n]*/g) || [cleanText]
+        let currentChunk = ''
+        for (const sentence of sentences) {
+          if ((currentChunk + sentence).length > 180) {
+            chunks.push(currentChunk.trim())
+            currentChunk = sentence
+          } else {
+            currentChunk += ' ' + sentence
+          }
+        }
+        if (currentChunk.trim()) {
+          chunks.push(currentChunk.trim())
+        }
+
+        let chunkIndex = 0
+        const playNext = () => {
+          if (chunkIndex >= chunks.length) {
+            setIsPlayingSpeech(null)
+            return
+          }
+          const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=${encodeURIComponent(chunks[chunkIndex])}`
+          const audio = new Audio(audioUrl)
+          (window as any).activeAudio = audio
+          
+          audio.onended = () => {
+            chunkIndex++
+            playNext()
+          }
+          audio.onerror = () => {
+            useWebSpeechFallback(cleanText)
+          }
+          audio.play().catch(() => {
+            useWebSpeechFallback(cleanText)
+          })
+        }
+
+        setIsPlayingSpeech(index)
+        playNext()
+      } catch (err) {
+        useWebSpeechFallback(cleanText)
       }
+    }
 
-      utterance.onend = () => {
+    // Web Speech API Fallback
+    function useWebSpeechFallback(cleanTextToSpeak: string) {
+      try {
+        const utterance = new SpeechSynthesisUtterance(cleanTextToSpeak)
+        utterance.lang = 'vi-VN'
+
+        const voices = window.speechSynthesis.getVoices()
+        // Try finding any voice containing 'vi' for Vietnamese
+        const viVoice = voices.find((v) => v.lang.toLowerCase().includes('vi'))
+        if (viVoice) {
+          utterance.voice = viVoice
+        }
+
+        utterance.onend = () => {
+          setIsPlayingSpeech(null)
+        }
+        utterance.onerror = () => {
+          setIsPlayingSpeech(null)
+        }
+
+        setIsPlayingSpeech(index)
+        window.speechSynthesis.speak(utterance)
+      } catch (e) {
+        console.error('TTS Fallback failed:', e)
         setIsPlayingSpeech(null)
       }
-
-      utterance.onerror = () => {
-        setIsPlayingSpeech(null)
-      }
-
-      setIsPlayingSpeech(index)
-      window.speechSynthesis.speak(utterance)
     }
   }
+
+  // Preload synthesis voices on startup
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.getVoices()
+      const handleVoicesChanged = () => {
+        window.speechSynthesis.getVoices()
+      }
+      window.speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged)
+      return () => {
+        window.speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (messages.length > 0) {
