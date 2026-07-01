@@ -450,9 +450,9 @@ export default function Home() {
             setIsPlayingSpeech(null)
             return
           }
-          const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=${encodeURIComponent(chunks[chunkIndex])}`
-          const audio = new Audio(audioUrl)
-          (window as any).activeAudio = audio
+          const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=vi&client=tw-ob&q=${encodeURIComponent(chunks[chunkIndex])}`;
+          const audio = new Audio(audioUrl);
+          (window as any).activeAudio = audio;
           
           audio.onended = () => {
             chunkIndex++
