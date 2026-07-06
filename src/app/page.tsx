@@ -204,8 +204,7 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: 'model',
-      content:
-        'Xin chào! Tôi là trợ lý sức khỏe MediMate AI. Bạn có thể nhập lịch uống thuốc bằng ngôn ngữ tự nhiên (ví dụ: "Nhắc tớ uống Aspirin 81mg lúc 8h sáng hàng ngày") hoặc nhắn cho tôi khi đã uống thuốc (ví dụ: "Tớ đã uống Aspirin rồi"). Tôi sẽ tự động kiểm tra tương tác thuốc giúp bạn nhé! 💊',
+      content: t.welcome,
     },
   ])
   const [inputMessage, setInputMessage] = useState('')
@@ -403,7 +402,7 @@ export default function Home() {
     if (typeof window !== 'undefined') {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
       if (!SpeechRecognition) {
-        alert('Trình duyệt của bạn không hỗ trợ Nhận diện giọng nói.')
+        alert(lang === 'vi' ? 'Trình duyệt của bạn không hỗ trợ Nhận diện giọng nói.' : 'Your browser does not support speech recognition.')
         return
       }
       const recognition = new SpeechRecognition()
@@ -720,7 +719,9 @@ export default function Home() {
           ...prev,
           {
             role: 'model',
-            content: `✅ Đã thêm thuốc **${newMedName}** vào lịch trình của bạn thành công (uống lúc ${newMedTime}).`,
+            content: lang === 'vi'
+              ? `✅ Đã thêm thuốc **${newMedName}** vào lịch trình của bạn thành công (uống lúc ${newMedTime}).`
+              : `✅ Added **${newMedName}** to your schedule successfully (at ${newMedTime}).`,
           },
         ])
       }
@@ -776,7 +777,9 @@ export default function Home() {
           ...prev,
           {
             role: 'model',
-            content: `ℹ️ Đã cập nhật thông tin thuốc **${editMedName}** thành công.`,
+            content: lang === 'vi'
+              ? `ℹ️ Đã cập nhật thông tin thuốc **${editMedName}** thành công.`
+              : `ℹ️ Updated **${editMedName}** successfully.`,
           },
         ])
       }
@@ -788,7 +791,7 @@ export default function Home() {
   }
 
   const handleDeleteMedication = async (id: string) => {
-    if (!confirm('Bạn có chắc chắn muốn xoá lịch uống loại thuốc này?')) return
+    if (!confirm(lang === 'vi' ? 'Bạn có chắc chắn muốn xoá lịch uống loại thuốc này?' : 'Are you sure you want to delete this medication schedule?')) return
     try {
       const res = await fetch(`/api/medications?id=${id}`, {
         method: 'DELETE',
@@ -900,7 +903,7 @@ export default function Home() {
       })
       if (error) throw error
     } catch (err: any) {
-      setAuthError(err.message || 'Không thể đăng nhập tài khoản demo.')
+      setAuthError(err.message || (lang === 'vi' ? 'Không thể đăng nhập tài khoản demo.' : 'Could not sign in to the demo account.'))
     } finally {
       setAuthLoading(false)
     }
@@ -1018,10 +1021,12 @@ export default function Home() {
   // Export the admin patient-adherence directory as a CSV report (no external deps).
   const handleExportReport = () => {
     if (!adminData) return
-    const header = ['Email', 'Ngày tạo', 'Số thuốc', 'Chuỗi (ngày)', 'Đã uống hôm nay', 'Tổng liều hôm nay', 'Tuân thủ hôm nay (%)']
+    const header = lang === 'vi'
+      ? ['Email', 'Ngày tạo', 'Số thuốc', 'Chuỗi (ngày)', 'Đã uống hôm nay', 'Tổng liều hôm nay', 'Tuân thủ hôm nay (%)']
+      : ['Email', 'Created', 'Medications', 'Streak (days)', 'Taken today', 'Total doses today', 'Adherence today (%)']
     const rows = adminData.users.map((u: any) => {
       const rate = u.todayLogs.total > 0 ? Math.round((u.todayLogs.taken / u.todayLogs.total) * 100) : 0
-      return [u.email, new Date(u.created_at).toLocaleDateString('vi-VN'), u.medCount, u.streak, u.todayLogs.taken, u.todayLogs.total, rate]
+      return [u.email, new Date(u.created_at).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US'), u.medCount, u.streak, u.todayLogs.taken, u.todayLogs.total, rate]
     })
     const esc = (c: unknown) => `"${String(c).replace(/"/g, '""')}"`
     const csv = [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n')
@@ -1517,7 +1522,7 @@ export default function Home() {
               {selectedImage && (
                 <div style={{ padding: '8px 16px', borderTop: '1px solid var(--mm-border-warm)', background: 'var(--mm-surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <img src={selectedImage.data} alt="Đơn thuốc" style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '10px', border: '1px solid var(--mm-border)' }} />
+                    <img src={selectedImage.data} alt={lang === 'vi' ? 'Đơn thuốc' : 'Prescription'} style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '10px', border: '1px solid var(--mm-border)' }} />
                     <span style={{ fontSize: '13px', color: 'var(--mm-text-muted)' }}>{lang === 'vi' ? 'Đã chọn ảnh đơn thuốc' : 'Prescription image selected'}</span>
                   </div>
                   <button type="button" onClick={() => setSelectedImage(null)} className="mm-btn mm-btn-ghost" style={{ padding: '6px', borderRadius: '8px' }}><span className="ms" style={{ fontSize: '18px' }}>close</span></button>
