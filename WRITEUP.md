@@ -23,7 +23,7 @@
 
 ## 3. Card & Thumbnail Image  *(560 × 280)*
 
-Use `public/cover_image.png` (crop/scale to 560 × 280). It shows the MediMate AI name/logo plus a condensed architecture strip (Chat/OCR → openFDA tool → interaction gate → schedule).
+Use `public/cover_image.png` (crop/scale to 560 × 280). It shows the MediMate AI logo and name, the tagline "Your safety-first medication concierge", the three value pillars (safer choices, smarter reminders, personalized support), and a pill + shield visual.
 
 ---
 
@@ -84,9 +84,11 @@ User (chat text / prescription photo)
 [Retrieve current medications]  ── from Supabase (the patient's existing drugs)
         │
         ▼
-[MCP-style tool call]  ── /api/mcp, a JSON-RPC 2.0 endpoint modeled on the
-        │                 Model Context Protocol (tools/list, tools/call),
-        ▼                 which queries the openFDA drug-label API
+[Tool call]  ── check_drug_interaction, implemented once in
+        │        services/drugInteraction.ts and exposed two ways:
+        │        · /api/mcp — internal JSON-RPC 2.0 transport (authenticated)
+        ▼        · /api/mcp-server/mcp — a public, spec-compliant MCP server
+                   (Streamable HTTP) querying the openFDA drug-label API
 [Interaction Checker Agent]  ── Gemini reasons over the raw label data vs. the
         │                        patient's existing drugs
         ▼
@@ -96,19 +98,21 @@ User (chat text / prescription photo)
 [Write to Supabase]  ── schedule the doses (RLS-protected)
 ```
 
-The pipeline is implemented across Next.js App Router API routes: `/api/chat` (intake + orchestration + gate), `/api/mcp` (the JSON-RPC tool endpoint over openFDA), and `/api/stats`, `/api/logs`, `/api/medications`, `/api/admin`, `/api/broadcast` for the surrounding features. Persistence and auth are handled by Supabase (PostgreSQL) with tightened Row Level Security. The default model is Google's `gemini-3.1-flash-lite`, pinned to a single overridable constant so a model rename can be fixed via environment variable without redeploying code.
+The pipeline is implemented across Next.js App Router API routes: `/api/chat` (intake + orchestration + gate), the two tool transports above, and `/api/stats`, `/api/logs`, `/api/medications`, `/api/admin`, `/api/broadcast` for the surrounding features. The drug-safety tool is a **real MCP server** built on `@modelcontextprotocol/sdk` + `mcp-handler`: judges can connect to `https://medimate-ai-five.vercel.app/api/mcp-server/mcp` from MCP Inspector (or any MCP client) and call `check_drug_interaction` directly. Persistence and auth are handled by Supabase (PostgreSQL) with tightened Row Level Security. The default model is Google's `gemini-3.1-flash-lite`, pinned to a single overridable constant so a model rename can be fixed via environment variable without redeploying code.
 
 ### The Build — an honest journey
 
 We built MediMate AI with a spec-driven approach: an `architecture.md` was written first so the AI-assisted coding stayed grounded in a consistent data model and security design.
 
-The most instructive part of the build was **what we deliberately did *not* ship**. Our original plan called for Google's ADK to manage the conversation lifecycle. In practice, version conflicts between the ADK packages and Next.js 16 broke the build repeatedly. Rather than fight the toolchain or misrepresent the result, we removed ADK entirely and implemented the conversation loop and context state directly in Next.js API routes and React client state. We are careful to describe the system accurately: it is a **controlled agentic pipeline**, and the tool server is a **JSON-RPC endpoint modeled on MCP** — not a full ADK multi-agent framework or a complete MCP server. That honesty is itself part of the engineering: the safety guarantees below are real precisely because we understood and controlled every stage ourselves.
+The most instructive part of the build was **what we deliberately did *not* ship**. Our original plan called for Google's ADK to manage the conversation lifecycle. In practice, version conflicts between the ADK packages and Next.js 16 broke the build repeatedly. Rather than fight the toolchain or misrepresent the result, we removed ADK entirely and implemented the conversation loop and context state directly in Next.js API routes and React client state. We describe the system accurately: it is a **controlled agentic pipeline**, not an ADK multi-agent framework. That honesty is itself part of the engineering: the safety guarantees below are real precisely because we understood and controlled every stage ourselves.
+
+The tool layer took the opposite journey — it *graduated into the real standard*. It began as a JSON-RPC endpoint merely modeled on MCP; we then implemented a genuine **MCP server** on the official `@modelcontextprotocol/sdk` (Streamable HTTP transport via `mcp-handler`), with both transports delegating to one shared implementation so they can never drift apart. The repo also ships **agent skills** for AI-assisted maintenance: a `GEMINI.md` context file plus Gemini CLI custom commands (`/safety:audit` re-verifies every security invariant, `/db:schema` explains the data model from the SQL source of truth, `/tool:check` exercises the live MCP server end-to-end), alongside the vendor-neutral `AGENTS.md` that steered the AI coding tools during the build.
 
 ### Security & Value
 
 Because this app handles personal health information, safety is not a feature bolted on at the end — it is the design center. We applied HIPAA-inspired safeguards:
 
-- **Auth on every user-facing route** via Supabase JWT session cookies; the MCP tool endpoint rejects anonymous access.
+- **Auth on every user-facing route** via Supabase JWT session cookies; the internal tool transport rejects anonymous access. The only deliberately anonymous route is the public MCP server, which touches no patient data — it serves only public openFDA labels under schema-enforced DoS caps.
 - **Tightened RLS** on `medication_logs`: the `INSERT` policy verifies ownership of *both* the log's `user_id` **and** the owner of the referenced `medication_id`, closing a cross-account log-injection hole.
 - **No PHI in logs** — patient drug data is never written to server console output.
 - **DoS limits** on the tool endpoint — at most 10 drugs per interaction check, drug names capped at 100 characters.
@@ -124,17 +128,19 @@ MediMate AI is deployed and publicly usable on Vercel at **https://medimate-ai-f
 ### Course concepts demonstrated
 
 - **Agent / agentic system** — the fail-safe intake → tool → interaction-checker → gate pipeline.
-- **MCP** — a JSON-RPC 2.0 tool endpoint modeled on the Model Context Protocol, wrapping openFDA.
-- **Security features** — auth, tightened RLS, DoS limits, PHI-safe logging, and the fail-safe write gate.
+- **MCP server** — a spec-compliant MCP server (`@modelcontextprotocol/sdk` + `mcp-handler`, Streamable HTTP) exposing `check_drug_interaction`, publicly connectable at `/api/mcp-server/mcp`, plus the internal authenticated JSON-RPC transport.
+- **Security features** — auth, tightened RLS, DoS limits, PHI-safe logging, a scoped anonymous surface, and the fail-safe write gate.
 - **Deployability** — a live, reproducible Vercel deployment.
+- **Agent skills (CLI)** — `GEMINI.md` + Gemini CLI custom commands (`/safety:audit`, `/db:schema`, `/tool:check`) shipped in `.gemini/commands/`.
 
-*(Word count of this Project Description: ~950 words — comfortably within the 2,500-word limit, leaving room to expand any section.)*
+*(Word count of this Project Description: ~1,100 words — comfortably within the 2,500-word limit, leaving room to expand any section.)*
 
 ---
 
 ## 7. Attachments / Project Links
 
 - **Live demo:** https://medimate-ai-five.vercel.app/
-- **GitHub repository:** *[paste public repo URL]*
+- **GitHub repository:** https://github.com/lnkhanhtdtu/MediMate-AI
 - **Demo video (YouTube):** *[paste YouTube link]*
-- **Architecture doc:** `architecture.md` in the repository
+- **Architecture doc:** `architecture.md` in the repository (data model ERD, flows, security design)
+- **Try the MCP server:** `npx @modelcontextprotocol/inspector` → connect to `https://medimate-ai-five.vercel.app/api/mcp-server/mcp` (Streamable HTTP) → call `check_drug_interaction` with `["warfarin", "aspirin"]`

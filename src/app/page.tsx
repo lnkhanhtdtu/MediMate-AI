@@ -1086,7 +1086,7 @@ export default function Home() {
   }
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden font-sans" style={{ background: 'var(--mm-bg)', color: 'var(--mm-text)' }}>
+    <div className="flex flex-col h-screen overflow-hidden font-sans" style={{ height: '100dvh', background: 'var(--mm-bg)', color: 'var(--mm-text)' }}>
       {/* Auth Screen */}
       {!user ? (
         <AuthScreen lang={lang} setLang={setLang} authEmail={authEmail} setAuthEmail={setAuthEmail} authPassword={authPassword} setAuthPassword={setAuthPassword} showAuthPassword={showAuthPassword} setShowAuthPassword={setShowAuthPassword} authError={authError} authLoading={authLoading} handleAuth={handleAuth} handleQuickSignIn={handleQuickSignIn} />

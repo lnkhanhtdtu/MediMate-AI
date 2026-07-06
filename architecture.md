@@ -14,8 +14,11 @@ MediMate AI is built on the **Next.js App Router** combined with a **Backend-as-
 graph TD
     Client[Next.js Client UI] -->|1. Send message / OCR image| ChatAPI[/api/chat/]
     Client -->|4. Update dose taken| LogsAPI[/api/logs/]
-    ChatAPI -->|2. Look up label data| MCP[/api/mcp/]
-    MCP -->|External API call| OpenFDA[openFDA API]
+    ChatAPI -->|2. Look up label data| MCP[/api/mcp — internal JSON-RPC/]
+    MCP -->|Shared tool logic| Svc[services/drugInteraction.ts]
+    MCPServer[/api/mcp-server/mcp — public MCP server/] -->|Shared tool logic| Svc
+    Svc -->|External API call| OpenFDA[openFDA API]
+    ExtClient[Any MCP client, e.g. MCP Inspector] -->|Streamable HTTP| MCPServer
     ChatAPI -->|3. Analyze interactions| Gemini[Google Gemini 3.1 Flash-Lite]
     ChatAPI -->|Save prescription| DB[(Supabase DB)]
     LogsAPI -->|Write adherence log| DB
@@ -23,7 +26,61 @@ graph TD
 
 ---
 
-## 2. Core Business Flows
+## 2. Data Model (ERD)
+
+Three RLS-protected tables in Supabase (PostgreSQL); full DDL in [`supabase/schema.sql`](supabase/schema.sql) and incremental history in `supabase/migrations/`:
+
+```mermaid
+erDiagram
+    auth_users ||--o{ medications : "owns"
+    auth_users ||--o{ medication_logs : "owns"
+    auth_users |o--o{ broadcasts : "created_by (admin)"
+    medications ||--o{ medication_logs : "generates (CASCADE)"
+
+    medications {
+        uuid id PK
+        uuid user_id FK "auth.users, RLS owner"
+        text name
+        text dosage
+        text frequency
+        jsonb schedule "e.g. [08:00, 20:00]"
+        text prescription_name
+        numeric total_stock
+        numeric remaining_stock
+        numeric dosage_quantity "supports 0.5 tablet"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    medication_logs {
+        uuid id PK
+        uuid user_id FK "RLS: must own medication too"
+        uuid medication_id FK
+        timestamptz scheduled_time "UNIQUE with medication_id"
+        timestamptz taken_at
+        text status "taken | missed | scheduled"
+        timestamptz created_at
+    }
+
+    broadcasts {
+        uuid id PK
+        text title
+        text message
+        text severity "info | warning | urgent"
+        uuid created_by FK "SET NULL on delete"
+        timestamptz created_at
+    }
+```
+
+Integrity mechanisms beyond the columns:
+
+- **Stock trigger** — `handle_medication_log_status_change()` decrements `remaining_stock` by `dosage_quantity` when a log flips to `taken` (and restores it when un-taken), clamped to `[0, total_stock]`.
+- **Race guard** — unique index `(medication_id, scheduled_time)` prevents two concurrent page loads from generating duplicate daily logs.
+- **Write path for broadcasts** — no user INSERT policy; rows are created only through the admin API using the service-role key.
+
+---
+
+## 3. Core Business Flows
 
 ### A. Add Medication & Interaction Check (Intake & Safe Interaction Checker)
 
@@ -32,8 +89,8 @@ When a user submits a request to add a new medication (via chat text or a prescr
 1. **Intake Agent**: Gemini extracts the medication fields (`name`, `dosage`, `frequency`, `schedule`, `total_stock`, `dosage_quantity`).
 2. **Retrieve Current Drugs**: The system loads the patient's currently-taken medications from Supabase.
 3. **MCP Query**:
-   - The `/api/chat` route makes an internal POST call to the MCP-style tool endpoint `/api/mcp`.
-   - That endpoint uses `AbortSignal.timeout(8000)` to query interaction data from the U.S. openFDA API.
+   - The `/api/chat` route makes an internal POST call to the JSON-RPC tool endpoint `/api/mcp`.
+   - The tool logic lives in `src/services/drugInteraction.ts` (shared with the public MCP server) and uses `AbortSignal.timeout(8000)` to query interaction data from the U.S. openFDA API.
 4. **Interaction Checker Agent**:
    - Receives the raw label report from the tool endpoint.
    - Uses Gemini to analyze cross-interaction warnings between the new medication and the existing ones.
@@ -50,7 +107,20 @@ The real adherence rate is computed automatically via the `/api/stats` route and
 
 ---
 
-## 3. Medical-Data Security Policy (HIPAA-inspired)
+### C. The Drug-Safety Tool — two transports, one implementation
+
+The `check_drug_interaction` tool is implemented once in `src/services/drugInteraction.ts` and exposed through two transports:
+
+| Transport | Route | Auth | Purpose |
+|---|---|---|---|
+| Internal JSON-RPC 2.0 (`tools/list` / `tools/call`) | `/api/mcp` | Supabase session cookie required | Called by the chat pipeline with the patient's auth context |
+| **Public MCP server** (Model Context Protocol, Streamable HTTP via `@modelcontextprotocol/sdk` + `mcp-handler`) | `/api/mcp-server/mcp` | Anonymous by design | Lets any MCP client (e.g. MCP Inspector, Claude Desktop, Gemini CLI) call the same tool |
+
+The public endpoint is safe to leave anonymous because it handles **no patient data** — it only proxies public openFDA label documents — and enforces the same DoS caps (≤ 10 drugs per check, drug names ≤ 100 characters) via its zod input schema.
+
+---
+
+## 4. Medical-Data Security Policy (HIPAA-inspired)
 
 To protect personal health information, MediMate AI applies the following measures:
 
@@ -66,14 +136,15 @@ To protect personal health information, MediMate AI applies the following measur
          )
      )
      ```
-2. **Protecting the MCP tool endpoint**:
-   - `/api/mcp` requires an authenticated user via the Supabase Auth session cookie forwarded from `/api/chat`. Anonymous external access is fully blocked.
+2. **Protecting the tool endpoints**:
+   - `/api/mcp` (the internal transport used by the agent pipeline) requires an authenticated user via the Supabase Auth session cookie forwarded from `/api/chat`. Anonymous access is fully blocked.
+   - `/api/mcp-server/mcp` (the public MCP server) is intentionally anonymous but exposes **only public openFDA data** — never patient data — with schema-enforced DoS caps.
 3. **No PHI leakage**:
    - Patient medical data is never written to server console logs (e.g. no `console.log` of prescription data or dose-log details).
 
 ---
 
-## 4. Admin Panel Layout & RBAC
+## 5. Admin Panel Layout & RBAC
 
 Access control is based on an **email allowlist** configured via the `ADMIN_EMAILS` environment variable and checked entirely server-side (it cannot be spoofed from the client).
 

@@ -17,7 +17,7 @@ Người dùng tương tác bằng ngôn ngữ tự nhiên (tiếng Việt hoặ
 | # | Tính năng | Mô tả |
 |---|-----------|-------|
 | 1 | **Trợ lý sức khỏe hội thoại** | Chat ngôn ngữ tự nhiên (Việt/Anh). Agent suy luận trên nội dung phi cấu trúc và chủ động hỏi lại khi thiếu thông tin quan trọng (liều lượng, thời gian) trước khi lưu bất cứ gì. |
-| 2 | **Kiểm tra tương tác thuốc (JSON-RPC theo mô hình MCP + openFDA)** | Một endpoint công cụ JSON-RPC 2.0 nội bộ (thiết kế theo Model Context Protocol — `tools/list`, `tools/call`) tra cứu openFDA và cảnh báo tương tác chéo nguy hiểm **trước khi** thêm thuốc mới vào lịch. |
+| 2 | **Kiểm tra tương tác thuốc (MCP server + openFDA)** | Công cụ `check_drug_interaction` tra cứu openFDA và cảnh báo tương tác chéo nguy hiểm **trước khi** thêm thuốc mới vào lịch. Công cụ được mở qua **MCP server chuẩn spec** (`/api/mcp-server/mcp`, Streamable HTTP — kết nối được từ mọi MCP client) và qua endpoint JSON-RPC 2.0 nội bộ có xác thực mà pipeline agent sử dụng. |
 | 3 | **Đọc đơn thuốc bằng ảnh (OCR)** | Chụp hoặc tải ảnh đơn thuốc; agent trích xuất tên thuốc, liều lượng, tần suất và lịch uống, rồi tự động tạo nhắc nhở. |
 | 4 | **Theo dõi chuỗi ngày tuân thủ (Adherence Streak)** | Tính chuỗi ngày tuân thủ thực tế — một ngày chỉ được tính là "đạt" khi ≥ 80% số lượt uống trong ngày được thực hiện. |
 | 5 | **Phân hệ Quản trị (Admin Portal)** | Thống kê toàn hệ thống (người dùng, tổng số thuốc, tỷ lệ tuân thủ), xem chi tiết từng bệnh nhân, và **phát thông báo khẩn cấp toàn hệ thống (System Broadcast)**. Quyền truy cập được kiểm soát phía máy chủ qua allowlist `ADMIN_EMAILS`. |
@@ -32,8 +32,11 @@ MediMate AI vận hành theo mô hình **agentic pipeline có kiểm soát an to
 graph TD
     Client[Giao diện Next.js] -->|1. Tin nhắn / ảnh đơn thuốc| ChatAPI[/api/chat — Intake Agent/]
     Client -->|Đánh dấu đã uống| LogsAPI[/api/logs/]
-    ChatAPI -->|2. Tra cứu nhãn thuốc| MCP[/api/mcp — công cụ JSON-RPC/]
-    MCP -->|Gọi API ngoài| OpenFDA[openFDA API]
+    ChatAPI -->|2. Tra cứu nhãn thuốc| MCP[/api/mcp — JSON-RPC nội bộ/]
+    MCPClient[MCP client bất kỳ — Inspector, Claude, Gemini CLI] -->|Streamable HTTP| MCPServer[/api/mcp-server/mcp — MCP server công khai/]
+    MCP -->|Logic công cụ dùng chung| Svc[services/drugInteraction.ts]
+    MCPServer -->|Logic công cụ dùng chung| Svc
+    Svc -->|Gọi API ngoài| OpenFDA[openFDA API]
     ChatAPI -->|3. Suy luận tương tác| Gemini[Google Gemini 3.1 Flash-Lite]
     ChatAPI -->|4. Gate: chỉ ghi khi an toàn| DB[(Supabase PostgreSQL + RLS)]
     LogsAPI -->|Ghi nhật ký tuân thủ| DB
@@ -47,9 +50,20 @@ Xem [architecture.vi.md](architecture.vi.md) để biết chi tiết mô hình d
 | Khái niệm | Ở đâu |
 |-----------|-------|
 | **Agentic pipeline** (Intake Agent → công cụ → Interaction Checker → cổng ghi an toàn) | `src/app/api/chat/route.ts` |
-| **Công cụ theo mô hình MCP** (JSON-RPC 2.0 `tools/list` / `tools/call` trên openFDA) | `src/app/api/mcp/route.ts` |
+| **MCP server** (Model Context Protocol, Streamable HTTP qua `@modelcontextprotocol/sdk` + `mcp-handler`) + transport JSON-RPC 2.0 nội bộ | `src/app/api/mcp-server/[transport]/route.ts`, `src/app/api/mcp/route.ts`, logic dùng chung tại `src/services/drugInteraction.ts` |
 | **Tính năng bảo mật** (xác thực mọi route, RLS thắt chặt, giới hạn chống DoS, không log PHI, cổng ghi fail-safe) | `src/app/api/**`, `supabase/migrations/` |
 | **Khả năng triển khai (Deployability)** | Chạy trực tuyến trên Vercel — https://medimate-ai-five.vercel.app/ |
+| **Agent skills / CLI** (context Gemini CLI + custom commands: `/safety:audit`, `/db:schema`, `/tool:check`) | `GEMINI.md`, `.gemini/commands/`, `AGENTS.md` |
+
+#### Tự thử MCP server
+
+```bash
+npx @modelcontextprotocol/inspector
+# → kết nối tới: https://medimate-ai-five.vercel.app/api/mcp-server/mcp (Streamable HTTP)
+# → gọi tool: check_drug_interaction  { "drugs": ["warfarin", "aspirin"] }
+```
+
+Endpoint MCP công khai **không chạm tới dữ liệu bệnh nhân** — chỉ trung chuyển nhãn thuốc công khai của openFDA, kèm giới hạn chống DoS ép buộc qua schema (≤ 10 thuốc, tên ≤ 100 ký tự).
 
 ---
 
@@ -60,6 +74,7 @@ Xem [architecture.vi.md](architecture.vi.md) để biết chi tiết mô hình d
 | Frontend / Backend | Next.js 16 (App Router), React 19, TailwindCSS v4 |
 | Cơ sở dữ liệu | Supabase (PostgreSQL) với Row Level Security thắt chặt |
 | AI / LLM | `@google/genai` — mặc định dùng `gemini-3.1-flash-lite` (đổi qua `GEMINI_MODEL`) cho NLU, OCR và hội thoại |
+| Giao thức công cụ | `@modelcontextprotocol/sdk` + `mcp-handler` — MCP server công khai (Streamable HTTP) |
 | API ngoài | openFDA (Cục Quản lý Thực phẩm và Dược phẩm Hoa Kỳ) |
 | Hosting | Vercel |
 
@@ -76,7 +91,8 @@ Xem [architecture.vi.md](architecture.vi.md) để biết chi tiết mô hình d
 │   │   │   ├── broadcast/   # Phát/đọc thông báo hệ thống
 │   │   │   ├── chat/        # Agent hội thoại, OCR, lên lịch (intake + gate)
 │   │   │   ├── logs/        # Đọc/cập nhật trạng thái đã uống
-│   │   │   ├── mcp/         # Endpoint công cụ JSON-RPC (theo mô hình MCP) → openFDA
+│   │   │   ├── mcp/         # Endpoint công cụ JSON-RPC nội bộ (có xác thực)
+│   │   │   ├── mcp-server/  # MCP server công khai (Streamable HTTP, chuẩn spec)
 │   │   │   ├── medications/ # CRUD đơn thuốc của bệnh nhân
 │   │   │   └── stats/       # Tính chuỗi ngày tuân thủ
 │   │   ├── globals.css      # Theme & token màu sắc
@@ -84,6 +100,7 @@ Xem [architecture.vi.md](architecture.vi.md) để biết chi tiết mô hình d
 │   │   └── page.tsx         # Dashboard chính + cửa sổ chat AI
 │   ├── components/          # UI dùng chung: Chrome (header/nav/auth), Modals, types
 │   ├── services/
+│   │   ├── drugInteraction.ts   # Logic công cụ openFDA dùng chung (cả 2 transport MCP)
 │   │   └── medicationService.ts # CRUD thuốc + logic chuỗi tuân thủ
 │   └── utils/
 │       ├── apiError.ts      # Chuẩn hoá phản hồi lỗi (ẩn chi tiết nhạy cảm)
@@ -91,6 +108,9 @@ Xem [architecture.vi.md](architecture.vi.md) để biết chi tiết mô hình d
 ├── supabase/
 │   ├── migrations/          # Bảng, chính sách RLS, trigger (00 → 07)
 │   └── schema.sql           # Lược đồ hợp nhất đầy đủ
+├── .gemini/commands/        # Agent skills cho Gemini CLI (/safety:audit, /db:schema, /tool:check)
+├── GEMINI.md                # File context cho Gemini CLI (luật cho agent trong repo này)
+├── AGENTS.md                # Hướng dẫn agent trung lập nhà cung cấp
 └── .env.example             # Biểu mẫu biến môi trường
 ```
 
@@ -180,6 +200,13 @@ MediMate AI áp dụng các biện pháp lấy cảm hứng từ HIPAA:
   )
   ```
 - **Không log PHI** — dữ liệu y tế của bệnh nhân không bao giờ được ghi ra console log máy chủ.
-- **Giới hạn chống DoS** trên endpoint MCP — tối đa 10 thuốc mỗi lượt kiểm tra tương tác, tên thuốc giới hạn 100 ký tự.
+- **Giới hạn chống DoS** trên cả hai transport công cụ — tối đa 10 thuốc mỗi lượt kiểm tra tương tác, tên thuốc giới hạn 100 ký tự (một nguồn sự thật duy nhất tại `src/services/drugInteraction.ts`).
+- **Bề mặt ẩn danh có giới hạn** — MCP server công khai (`/api/mcp-server/mcp`) là route không xác thực duy nhất, và chỉ phục vụ **dữ liệu openFDA công khai**, không bao giờ là dữ liệu bệnh nhân; transport nội bộ `/api/mcp` vẫn yêu cầu Supabase session.
 - **Cổng kiểm tra tương tác fail-safe** — nếu việc kiểm tra lỗi hoặc không parse được, agent cảnh báo người dùng thay vì âm thầm lưu thuốc như thể "an toàn".
 - **Allowlist admin phía server** — quyền admin do `ADMIN_EMAILS` quyết định ở phía server, không thể giả mạo từ client.
+
+---
+
+## 📄 Giấy phép
+
+Phát hành theo [Giấy phép MIT](LICENSE).

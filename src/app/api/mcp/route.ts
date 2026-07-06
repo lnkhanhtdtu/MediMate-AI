@@ -1,60 +1,19 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import {
+  buildInteractionReport,
+  MAX_DRUGS_PER_CHECK,
+  MAX_DRUG_NAME_LENGTH,
+} from '@/services/drugInteraction'
 
-// Interface for OpenFDA label result
-interface DrugLabelInfo {
-  name: string
-  brand_name: string
-  generic_name: string
-  drug_interactions: string | null
-  warnings: string | null
-}
-
-// Fetch drug label from OpenFDA with timeout
-async function fetchDrugLabel(drugName: string): Promise<DrugLabelInfo | null> {
-  // We search in brand_name, generic_name, and active_ingredient
-  const url = `https://api.fda.gov/drug/label.json?search=openfda.brand_name:"${encodeURIComponent(
-    drugName
-  )}"+OR+openfda.generic_name:"${encodeURIComponent(
-    drugName
-  )}"+OR+active_ingredient:"${encodeURIComponent(drugName)}"`
-
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
-    if (!res.ok) {
-      // Do NOT log the drug name (PHI). Log only the opaque status.
-      console.warn('OpenFDA lookup returned a non-OK status', { status: res.status })
-      return null
-    }
-    const data = await res.json()
-    if (!data.results || data.results.length === 0) {
-      return null
-    }
-    const result = data.results[0]
-    
-    // Extract interaction text. It can be a string or an array of strings.
-    const extractText = (field: any): string | null => {
-      if (!field) return null
-      if (Array.isArray(field)) return field.join('\n')
-      return String(field)
-    }
-
-    return {
-      name: drugName,
-      brand_name: result.openfda?.brand_name?.[0] || drugName,
-      generic_name: result.openfda?.generic_name?.[0] || drugName,
-      drug_interactions: extractText(result.drug_interactions),
-      warnings: extractText(result.warnings),
-    }
-  } catch (error) {
-    // Do NOT log the drug name (PHI).
-    console.error('OpenFDA drug-label lookup failed', error)
-    return null
-  }
-}
+// Internal JSON-RPC 2.0 tool endpoint used by the chat agent pipeline.
+// It exposes the same `check_drug_interaction` tool as the public MCP server
+// at /api/mcp-server/mcp (both share src/services/drugInteraction.ts), but
+// this route additionally requires a Supabase session because it is called
+// with the patient's auth cookie from inside /api/chat.
 
 export async function POST(request: Request) {
-  let id: any = null
+  let id: unknown = null
   try {
     // 1. Authenticate user
     const supabase = await createClient()
@@ -120,14 +79,14 @@ export async function POST(request: Request) {
         }
 
         // Limit the number of drugs to prevent DoS amplification
-        if (drugs.length > 10) {
+        if (drugs.length > MAX_DRUGS_PER_CHECK) {
           return NextResponse.json({
             jsonrpc: '2.0',
             result: {
               content: [
                 {
                   type: 'text',
-                  text: 'Tối đa 10 loại thuốc mỗi lần kiểm tra.',
+                  text: `Tối đa ${MAX_DRUGS_PER_CHECK} loại thuốc mỗi lần kiểm tra.`,
                 },
               ],
               isError: true,
@@ -138,55 +97,19 @@ export async function POST(request: Request) {
 
         // Limit the length of drug names
         for (const drug of drugs) {
-          if (typeof drug !== 'string' || drug.length > 100) {
+          if (typeof drug !== 'string' || drug.length > MAX_DRUG_NAME_LENGTH) {
             return NextResponse.json({
               jsonrpc: '2.0',
               error: {
                 code: -32602,
-                message: 'Tên thuốc không hợp lệ hoặc quá dài (tối đa 100 ký tự).'
+                message: `Tên thuốc không hợp lệ hoặc quá dài (tối đa ${MAX_DRUG_NAME_LENGTH} ký tự).`
               },
               id
             })
           }
         }
 
-        // Fetch labels for all drugs concurrently
-        const labelPromises = drugs.map((drug) => fetchDrugLabel(drug))
-        const labels = await Promise.all(labelPromises)
-
-        // Build report
-        let reportText = `BÁO CÁO TRA CỨU TƯƠNG TÁC THUỐC (NGUỒN: openFDA)\n`
-        reportText += `=================================================\n\n`
-
-        let foundAnyData = false
-
-        labels.forEach((label, idx) => {
-          const searchName = drugs[idx]
-          if (!label) {
-            reportText += `- Không tìm thấy dữ liệu nhãn chính thức cho: "${searchName}" trên OpenFDA.\n\n`
-            return
-          }
-
-          foundAnyData = true
-          reportText += `### THUỐC: ${label.brand_name.toUpperCase()} (Tên gốc: ${label.generic_name})\n`
-          
-          if (label.drug_interactions) {
-            reportText += `* **Thông tin tương tác thuốc:**\n${label.drug_interactions}\n\n`
-          } else {
-            reportText += `* **Thông tin tương tác thuốc:** Không tìm thấy phần thông tin tương tác cụ thể trong tài liệu nhãn.\n\n`
-          }
-
-          if (label.warnings) {
-            reportText += `* **Cảnh báo chung (Warnings):**\n${label.warnings.slice(0, 1000)}${label.warnings.length > 1000 ? '...' : ''}\n\n`
-          }
-          reportText += `-------------------------------------------------\n\n`
-        })
-
-        if (!foundAnyData) {
-          reportText = `Không thể tìm thấy dữ liệu cho bất kỳ loại thuốc nào trong danh sách: ${drugs.join(', ')} trên OpenFDA.`
-        } else {
-          reportText += `\n*Lưu ý: Dữ liệu trên được trích xuất từ nhãn thuốc chính thức của FDA Hoa Kỳ. AI Agent cần đọc và phân tích xem có bất kỳ sự tương tác chéo nào giữa các loại thuốc này để đưa ra cảnh báo cho người dùng.*`
-        }
+        const reportText = await buildInteractionReport(drugs)
 
         return NextResponse.json({
           jsonrpc: '2.0',
@@ -221,7 +144,7 @@ export async function POST(request: Request) {
       },
       id,
     })
-  } catch (error: any) {
+  } catch (error) {
     console.error('MCP Server Route Error:', error)
     return NextResponse.json({
       jsonrpc: '2.0',

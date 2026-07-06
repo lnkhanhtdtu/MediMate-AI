@@ -1,0 +1,13 @@
+# Gemini CLI custom command: /tool:check
+# Exercises the public MCP server end-to-end with real drug names.
+
+description = "Call the check_drug_interaction tool on the public MCP server for the given drugs (e.g. /tool:check warfarin aspirin)"
+
+prompt = """
+The user wants to test the drug-interaction tool with these drugs: {{args}}
+
+1. Determine the base URL: use http://localhost:3000 if a dev server is running, otherwise https://medimate-ai-five.vercel.app.
+2. POST a JSON-RPC 2.0 `tools/call` request for the tool `check_drug_interaction` with the drugs above to <base>/api/mcp-server/mcp, using headers `Content-Type: application/json` and `Accept: application/json, text/event-stream` (Streamable HTTP transport; the response may arrive as an SSE `data:` line — parse the JSON out of it).
+3. Show the raw report text returned by openFDA.
+4. Then reason over the report yourself: is there a real cross-interaction between these drugs? State severity (HIGH/MEDIUM/LOW/NONE) and a one-paragraph plain-language explanation — exactly the judgment the in-app Interaction Checker agent makes.
+"""

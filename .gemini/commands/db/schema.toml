@@ -1,0 +1,15 @@
+# Gemini CLI custom command: /db:schema
+# Explains the live data model straight from the SQL source of truth.
+
+description = "Explain the Supabase data model (tables, relationships, RLS, triggers) from supabase/schema.sql"
+
+prompt = """
+Read supabase/schema.sql and every file in supabase/migrations/, then explain the current data model:
+
+- Each table (medications, medication_logs, broadcasts): columns, types, defaults, and what the column is for.
+- Relationships and cascade behavior (draw a small mermaid erDiagram).
+- Every RLS policy and the attack it prevents — pay special attention to the tightened medication_logs INSERT policy.
+- The stock-decrement trigger and the duplicate-log unique index (what race condition it guards).
+
+If the user passed an argument, focus the explanation on: {{args}}
+"""

@@ -1,0 +1,18 @@
+# Gemini CLI custom command: /safety:audit
+# Re-verifies the security invariants this project's docs promise.
+
+description = "Audit MediMate's security invariants (auth, RLS, PHI logging, fail-safe gate, DoS caps)"
+
+prompt = """
+Audit this repository against MediMate AI's documented security invariants. For each item, cite file + line evidence and give a PASS/FAIL verdict:
+
+1. Every user-facing route under src/app/api/** calls supabase.auth.getUser() (or equivalent) before touching data. The only allowed anonymous route is the public MCP server at src/app/api/mcp-server/, which must serve only public openFDA data.
+2. The Safety Gate in src/app/api/chat/route.ts fails CLOSED: a high/medium-risk, errored, or unparseable interaction check must warn the user and must NOT write to the database.
+3. No console.log/console.error/console.warn anywhere prints drug names or other patient data (PHI).
+4. The drug-interaction tool enforces DoS caps from src/services/drugInteraction.ts (MAX_DRUGS_PER_CHECK, MAX_DRUG_NAME_LENGTH) on BOTH transports.
+5. Admin access is decided only by the server-side ADMIN_EMAILS allowlist (no client-derived admin checks).
+6. supabase/migrations keep RLS enabled on medications, medication_logs, broadcasts, and the medication_logs INSERT policy verifies ownership of both user_id and the referenced medication_id.
+7. No API keys, passwords, or JWTs are committed (check tracked files; .env* must be gitignored except .env.example).
+
+Finish with a summary table and a list of any regressions to fix.
+"""

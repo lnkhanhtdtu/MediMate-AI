@@ -17,7 +17,7 @@ Users interact in natural Vietnamese (or English) through a chat interface, or s
 | # | Feature | Description |
 |---|---------|-------------|
 | 1 | **Conversational Health Agent** | Natural-language chat (Vietnamese/English). The agent reasons over unstructured input and proactively asks follow-up questions when critical info (dosage, timing) is missing before saving anything. |
-| 2 | **Drug-Interaction Screening (MCP-style JSON-RPC + openFDA)** | An internal JSON-RPC 2.0 tool endpoint (designed after the Model Context Protocol — `tools/list`, `tools/call`) queries openFDA and warns about dangerous cross-interactions **before** a new medication is scheduled. |
+| 2 | **Drug-Interaction Screening (MCP server + openFDA)** | The `check_drug_interaction` tool queries openFDA and warns about dangerous cross-interactions **before** a new medication is scheduled. It is exposed both as a **spec-compliant MCP server** (`/api/mcp-server/mcp`, Streamable HTTP — connect with any MCP client) and as the internal authenticated JSON-RPC 2.0 endpoint the agent pipeline calls. |
 | 3 | **Prescription OCR** | Snap or upload a photo of a prescription; the agent extracts drug name, dosage, frequency and schedule, then auto-creates the reminders. |
 | 4 | **Adherence Streak Tracking** | Computes the patient's real adherence streak — a day counts as "on track" only when ≥80% of that day's scheduled doses were actually taken. |
 | 5 | **Admin Portal** | System-wide stats (users, total medications, overall adherence), per-patient drill-down, and an emergency **System Broadcast**. Access is gated server-side by an `ADMIN_EMAILS` allowlist. |
@@ -32,8 +32,11 @@ MediMate AI follows a **fail-safe agentic pipeline**: the intake agent extracts 
 graph TD
     Client[Next.js Client UI] -->|1. Chat message / prescription photo| ChatAPI[/api/chat — Intake Agent/]
     Client -->|Mark dose taken| LogsAPI[/api/logs/]
-    ChatAPI -->|2. Look up drug labels| MCP[/api/mcp — JSON-RPC tool/]
-    MCP -->|External call| OpenFDA[openFDA API]
+    ChatAPI -->|2. Look up drug labels| MCP[/api/mcp — internal JSON-RPC tool/]
+    MCPClient[Any MCP client — Inspector, Claude, Gemini CLI] -->|Streamable HTTP| MCPServer[/api/mcp-server/mcp — public MCP server/]
+    MCP -->|Shared tool logic| Svc[services/drugInteraction.ts]
+    MCPServer -->|Shared tool logic| Svc
+    Svc -->|External call| OpenFDA[openFDA API]
     ChatAPI -->|3. Reason over interactions| Gemini[Google Gemini 3.1 Flash-Lite]
     ChatAPI -->|4. Gate: write only if safe| DB[(Supabase PostgreSQL + RLS)]
     LogsAPI -->|Write adherence log| DB
@@ -47,9 +50,20 @@ See [architecture.md](architecture.md) for the full data model, adherence-streak
 | Concept | Where |
 |---------|-------|
 | **Agentic pipeline** (Intake Agent → tool → Interaction Checker → safe-write gate) | `src/app/api/chat/route.ts` |
-| **MCP-style tool server** (JSON-RPC 2.0 `tools/list` / `tools/call` over openFDA) | `src/app/api/mcp/route.ts` |
+| **MCP server** (Model Context Protocol, Streamable HTTP via `@modelcontextprotocol/sdk` + `mcp-handler`) + internal JSON-RPC 2.0 transport | `src/app/api/mcp-server/[transport]/route.ts`, `src/app/api/mcp/route.ts`, shared logic in `src/services/drugInteraction.ts` |
 | **Security features** (auth on every route, tightened RLS, DoS limits, no PHI in logs, fail-safe write gate) | `src/app/api/**`, `supabase/migrations/` |
 | **Deployability** | Live on Vercel — https://medimate-ai-five.vercel.app/ |
+| **Agent skills / CLI** (Gemini CLI context + custom commands: `/safety:audit`, `/db:schema`, `/tool:check`) | `GEMINI.md`, `.gemini/commands/`, `AGENTS.md` |
+
+#### Try the MCP server yourself
+
+```bash
+npx @modelcontextprotocol/inspector
+# → connect to: https://medimate-ai-five.vercel.app/api/mcp-server/mcp (Streamable HTTP)
+# → call tool: check_drug_interaction  { "drugs": ["warfarin", "aspirin"] }
+```
+
+The public MCP endpoint handles **no patient data** — it only proxies public openFDA drug labels, with schema-enforced DoS caps (≤ 10 drugs, names ≤ 100 chars).
 
 ---
 
@@ -60,6 +74,7 @@ See [architecture.md](architecture.md) for the full data model, adherence-streak
 | Frontend / Backend | Next.js 16 (App Router), React 19, TailwindCSS v4 |
 | Database | Supabase (PostgreSQL) with tightened Row Level Security |
 | AI / LLM | `@google/genai` — default model `gemini-3.1-flash-lite` (override via `GEMINI_MODEL`) for NLU extraction, OCR and conversation |
+| Tool protocol | `@modelcontextprotocol/sdk` + `mcp-handler` — public MCP server (Streamable HTTP) |
 | External API | openFDA (U.S. Food and Drug Administration) |
 | Hosting | Vercel |
 
@@ -76,7 +91,8 @@ See [architecture.md](architecture.md) for the full data model, adherence-streak
 │   │   │   ├── broadcast/   # System broadcast publish/read
 │   │   │   ├── chat/        # Conversational agent, OCR, scheduling (intake + gate)
 │   │   │   ├── logs/        # Read/update dose-taken status
-│   │   │   ├── mcp/         # JSON-RPC tool endpoint (MCP-style) → openFDA
+│   │   │   ├── mcp/         # Internal JSON-RPC tool endpoint (authenticated)
+│   │   │   ├── mcp-server/  # Public MCP server (Streamable HTTP, spec-compliant)
 │   │   │   ├── medications/ # Patient medication CRUD
 │   │   │   └── stats/       # Adherence-streak computation
 │   │   ├── globals.css      # Theme & color tokens
@@ -84,6 +100,7 @@ See [architecture.md](architecture.md) for the full data model, adherence-streak
 │   │   └── page.tsx         # Main dashboard + AI chat window
 │   ├── components/          # Shared UI: Chrome (header/nav/auth), Modals, types
 │   ├── services/
+│   │   ├── drugInteraction.ts   # Shared openFDA tool logic (both MCP transports)
 │   │   └── medicationService.ts # Medication CRUD + adherence-streak logic
 │   └── utils/
 │       ├── apiError.ts      # Standardized error responses (hide sensitive detail)
@@ -91,6 +108,9 @@ See [architecture.md](architecture.md) for the full data model, adherence-streak
 ├── supabase/
 │   ├── migrations/          # Tables, RLS policies, triggers (00 → 07)
 │   └── schema.sql           # Full consolidated schema
+├── .gemini/commands/        # Gemini CLI agent skills (/safety:audit, /db:schema, /tool:check)
+├── GEMINI.md                # Gemini CLI context file (agent rules for this repo)
+├── AGENTS.md                # Vendor-neutral agent instructions
 └── .env.example             # Environment variable template
 ```
 
@@ -179,6 +199,13 @@ MediMate AI applies HIPAA-inspired safeguards:
   )
   ```
 - **No PHI in logs** — patient medical data is never written to server console logs.
-- **DoS limits** on the MCP endpoint — max 10 drugs per interaction check and drug names capped at 100 characters.
+- **DoS limits** on both tool transports — max 10 drugs per interaction check and drug names capped at 100 characters (single source of truth in `src/services/drugInteraction.ts`).
+- **Scoped anonymous surface** — the public MCP server (`/api/mcp-server/mcp`) is the only unauthenticated route, and it serves **only public openFDA data**, never patient data; the internal `/api/mcp` transport still requires a Supabase session.
 - **Fail-safe interaction gate** — if the interaction check fails or cannot be parsed, the agent warns the user instead of silently saving the medication as "safe".
 - **Server-side admin allowlist** — Admin access is decided by `ADMIN_EMAILS` on the server and cannot be spoofed from the client.
+
+---
+
+## 📄 License
+
+Released under the [MIT License](LICENSE).
