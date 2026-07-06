@@ -10,8 +10,9 @@ import {
 import { apiError } from '@/utils/apiError'
 
 // Gemini model id — overridable via env so a model rename can be fixed without a code
-// change/redeploy. IMPORTANT: verify this value resolves against the live @google/genai SDK.
-const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-3.1-flash-lite'
+// change/redeploy. Default is a widely-available stable model; override with GEMINI_MODEL
+// if your account has access to a newer/faster one (verify it resolves against @google/genai).
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash'
 
 function safeParseJson<T>(text: string | undefined | null): T | null {
   if (!text) return null
@@ -37,7 +38,8 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { message = '', image } = body
+    const { message = '', image, lang } = body
+    const isEn = lang === 'en'
 
     if (!message && !image) {
       return NextResponse.json({ error: 'Tin nhắn hoặc hình ảnh không được để trống.' }, { status: 400 })
@@ -90,7 +92,8 @@ ${logsContext || 'Chưa có nhật ký hôm nay.'}
 QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
 1. Bạn là trợ lý hỗ trợ nhắc lịch, không phải bác sĩ. Tuyệt đối không tự ý chẩn đoán bệnh hay kê đơn thuốc.
 2. Nếu người dùng hỏi lời khuyên y tế phức tạp, hãy khuyên họ tham khảo ý kiến bác sĩ chuyên khoa.
-3. Luôn phản hồi lịch sự, thân thiện và bằng tiếng Việt.
+3. Luôn phản hồi lịch sự, thân thiện.
+4. NGÔN NGỮ PHẢN HỒI: ${isEn ? 'Trả lời trường "general_response" hoàn toàn bằng tiếng Anh (English).' : 'Trả lời trường "general_response" hoàn toàn bằng tiếng Việt.'}
 `
 
     const schema = {
@@ -148,7 +151,7 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
     }
 
     // Process image base64 if provided
-    let contentParts: any[] = [activeMessage]
+    const contentParts: any[] = [activeMessage]
     if (image && image.data && image.mimeType) {
       const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp']
       const MAX_IMAGE_BYTES = 5 * 1024 * 1024 // 5MB
@@ -170,6 +173,8 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
       })
     }
 
+    const hasImage = contentParts.some((p) => typeof p === 'object' && 'inlineData' in p)
+
     const response = await ai.models.generateContent({
       model: GEMINI_MODEL,
       contents: contentParts,
@@ -177,15 +182,32 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
         systemInstruction: intakeSystemInstruction,
         responseMimeType: 'application/json',
         responseSchema: schema as any,
+        // Give the structured output plenty of room so a multi-drug prescription JSON
+        // isn't truncated (truncated JSON fails to parse → generic fallback).
+        maxOutputTokens: 8192,
+        // gemini-3.x flash-lite "thinks" by default; those thinking tokens ate the whole
+        // output budget → finishReason MAX_TOKENS before medication_details was emitted.
+        // Extraction is deterministic, so disable thinking to free the budget for the answer.
+        thinkingConfig: { thinkingBudget: 0 },
       },
     })
 
-    const nluResult = safeParseJson<any>(response.text)
+    const rawText = response.text
+    const nluResult = safeParseJson<any>(rawText)
     if (!nluResult || !nluResult.action) {
-      return NextResponse.json({
-        action: 'CHAT_RESPONSE',
-        message: 'Xin lỗi, tôi chưa hiểu rõ yêu cầu của bạn. Bạn vui lòng nói rõ hơn về tên thuốc và liều lượng nhé.',
-      })
+      // Diagnostic: surface WHY the structured output was unusable (safety block,
+      // truncation, empty candidate…) so failures are debuggable from the server log.
+      const finishReason = response.candidates?.[0]?.finishReason
+      const blockReason = (response as any)?.promptFeedback?.blockReason
+      console.error('[Chat] NLU unparseable — finishReason:', finishReason, '| blockReason:', blockReason, '| hasImage:', hasImage, '| raw:', (rawText || '').slice(0, 400))
+      const msg = hasImage
+        ? (isEn
+            ? "I couldn't read the medication details from the image. It may be blurry, too dark, or the drug name isn't clear — please retake a sharper, well-lit photo, or type the drug name + dosage instead."
+            : 'Tôi chưa đọc được thông tin thuốc từ ảnh. Ảnh có thể bị mờ, thiếu sáng hoặc chưa thấy rõ tên thuốc — bạn thử chụp lại rõ nét hơn (đủ sáng, chữ không bị mờ), hoặc gõ tên thuốc + liều lượng bằng chữ giúp mình nhé.')
+        : (isEn
+            ? "Sorry, I didn't quite understand your request. Please tell me the medication name and dosage more clearly."
+            : 'Xin lỗi, tôi chưa hiểu rõ yêu cầu của bạn. Bạn vui lòng nói rõ hơn về tên thuốc và liều lượng nhé.')
+      return NextResponse.json({ action: 'CHAT_RESPONSE', message: msg })
     }
 
     // 5. Handle Action: ADD_MEDICATION
@@ -251,7 +273,7 @@ Hãy trả về phản hữu JSON theo định dạng sau:
 {
   "has_interaction": boolean (true nếu có tương tác nguy hại đáng chú ý, ngược lại là false),
   "severity": "high" | "medium" | "low" | "none",
-  "explanation": "Lời giải thích chi tiết nhưng ngắn gọn bằng tiếng Việt về tương tác phát hiện được và khuyến cáo người dùng."
+  "explanation": "Lời giải thích chi tiết nhưng ngắn gọn ${isEn ? 'bằng tiếng Anh (English)' : 'bằng tiếng Việt'} về tương tác phát hiện được và khuyến cáo người dùng."
 }
 `
             const checkResponse = await ai.models.generateContent({
@@ -269,6 +291,8 @@ Hãy trả về phản hữu JSON theo định dạng sau:
                   },
                   required: ['has_interaction', 'severity', 'explanation'],
                 } as any,
+                maxOutputTokens: 2048,
+                thinkingConfig: { thinkingBudget: 0 },
               },
             })
 
@@ -321,12 +345,27 @@ Hãy trả về phản hữu JSON theo định dạng sau:
         }
       }
 
-      // If we have warnings (interaction found for some drugs), return warning details
+      // If we have warnings (interaction found for some drugs), return warning details.
+      // Also surface which meds WERE saved so the user isn't left thinking nothing happened
+      // when a multi-drug prescription had one flagged interaction.
       if (warnings.length > 0) {
+        const savedNote = savedMeds.length > 0
+          ? (isEn
+              ? `\n\n✅ Already added (no interaction): ${savedMeds.map((m) => m.name).join(', ')}.`
+              : `\n\n✅ Đã thêm (không có tương tác): ${savedMeds.map((m) => m.name).join(', ')}.`)
+          : ''
+        const sev = warnings[0].severity === 'high'
+          ? (isEn ? 'High risk' : 'Nguy hiểm cao')
+          : (isEn ? 'Medium' : 'Trung bình')
+        const head = isEn
+          ? `⚠️ **Drug interaction warning for ${warnings[0].medication.name} (${sev}):** ${warnings[0].explanation}\n\nDo you want to ignore this warning and add it anyway? (Click "Add anyway")`
+          : `⚠️ **Cảnh báo tương tác thuốc cho ${warnings[0].medication.name} (${sev}):** ${warnings[0].explanation}\n\nBạn có muốn bỏ qua cảnh báo này và tiếp tục thêm loại thuốc này vào lịch trình của mình không? (Gõ "tiếp tục thêm" hoặc click "Bỏ qua & Thêm")`
         return NextResponse.json({
           action: 'WARNING_INTERACTION',
           warning: warnings[0],
-          message: `⚠️ **Cảnh báo tương tác thuốc cho ${warnings[0].medication.name} (${warnings[0].severity === 'high' ? 'Nguy hiểm cao' : 'Trung bình'}):** ${warnings[0].explanation}\n\nBạn có muốn bỏ qua cảnh báo này và tiếp tục thêm loại thuốc này vào lịch trình của mình không? (Gõ "tiếp tục thêm" hoặc click "Bỏ qua & Thêm")`,
+          warnings,
+          savedMeds,
+          message: `${head}${savedNote}`,
         })
       }
 
@@ -335,10 +374,14 @@ Hãy trả về phản hữu JSON theo định dạng sau:
         return NextResponse.json({
           action: 'MEDICATION_ADDED',
           medication: savedMeds[0],
-          message: `✅ **Đã thêm lịch uống ${savedMeds.length} thuốc thành công!**\n- Các thuốc: ${medNames}\n- Hệ thống đã tự động lưu trữ từng loại thuốc riêng biệt để theo dõi tồn kho và cảnh báo chính xác nhất.`,
+          medications: savedMeds,
+          fromImage: contentParts.some((p) => typeof p === 'object' && 'inlineData' in p),
+          message: isEn
+            ? `✅ **Added ${savedMeds.length} medication(s) successfully!**\n- Medications: ${medNames}\n- Each drug is stored separately for accurate stock tracking and interaction checks.`
+            : `✅ **Đã thêm lịch uống ${savedMeds.length} thuốc thành công!**\n- Các thuốc: ${medNames}\n- Hệ thống đã tự động lưu trữ từng loại thuốc riêng biệt để theo dõi tồn kho và cảnh báo chính xác nhất.`,
         })
       } else {
-        return NextResponse.json({ error: 'Không thể lưu thuốc vào cơ sở dữ liệu.' }, { status: 500 })
+        return NextResponse.json({ error: isEn ? 'Could not save medication to the database.' : 'Không thể lưu thuốc vào cơ sở dữ liệu.' }, { status: 500 })
       }
     }
 
@@ -356,10 +399,13 @@ Hãy trả về phản hữu JSON theo định dạng sau:
       if (pendingLog) {
         const success = await updateLogStatus(pendingLog.id, 'taken', new Date().toISOString())
         if (success) {
+          const timeNow = new Date().toLocaleTimeString(isEn ? 'en-US' : 'vi-VN', { hour: '2-digit', minute: '2-digit' })
           return NextResponse.json({
             action: 'LOG_RECORDED',
             log_id: pendingLog.id,
-            message: `👍 **Đã ghi nhận!** Đã đánh dấu bạn đã uống thuốc **${pendingLog.medication?.name}** lúc ${new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}.`,
+            message: isEn
+              ? `👍 **Recorded!** Marked **${pendingLog.medication?.name}** as taken at ${timeNow}.`
+              : `👍 **Đã ghi nhận!** Đã đánh dấu bạn đã uống thuốc **${pendingLog.medication?.name}** lúc ${timeNow}.`,
           })
         }
       } else {
@@ -370,15 +416,20 @@ Hãy trả về phản hữu JSON theo định dạng sau:
             log.status === 'taken'
         )
         if (alreadyTaken) {
+          const t2 = alreadyTaken.taken_at ? new Date(alreadyTaken.taken_at).toLocaleTimeString(isEn ? 'en-US' : 'vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''
           return NextResponse.json({
             action: 'LOG_ALREADY_RECORDED',
-            message: `ℹ️ Bạn đã uống thuốc **${alreadyTaken.medication?.name}** hôm nay rồi (ghi nhận lúc ${alreadyTaken.taken_at ? new Date(alreadyTaken.taken_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''}).`,
+            message: isEn
+              ? `ℹ️ You already took **${alreadyTaken.medication?.name}** today (recorded at ${t2}).`
+              : `ℹ️ Bạn đã uống thuốc **${alreadyTaken.medication?.name}** hôm nay rồi (ghi nhận lúc ${t2}).`,
           })
         }
 
         return NextResponse.json({
           action: 'LOG_NOT_FOUND',
-          message: `🔍 Không tìm thấy lịch uống thuốc nào hôm nay cho "${nluResult.log_details.medication_name}". Bạn hãy kiểm tra lại danh sách thuốc của mình xem nhé.`,
+          message: isEn
+            ? `🔍 No scheduled dose found today for "${nluResult.log_details.medication_name}". Please check your medication list.`
+            : `🔍 Không tìm thấy lịch uống thuốc nào hôm nay cho "${nluResult.log_details.medication_name}". Bạn hãy kiểm tra lại danh sách thuốc của mình xem nhé.`,
         })
       }
     }

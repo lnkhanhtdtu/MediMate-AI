@@ -37,6 +37,10 @@ export async function POST(request: Request) {
     if (!logId || !status) {
       return NextResponse.json({ error: 'Missing logId or status' }, { status: 400 })
     }
+    const ALLOWED_STATUSES = ['taken', 'missed', 'scheduled'] as const
+    if (!ALLOWED_STATUSES.includes(status)) {
+      return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
+    }
 
     const takenAt = status === 'taken' ? new Date().toISOString() : null
 

@@ -34,10 +34,15 @@ export async function GET(request: Request) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-    // If service role key is not configured, return mock data for preview/demonstration
-    if (!serviceRoleKey || serviceRoleKey === 'your_service_role_key_here') {
-      console.warn('SUPABASE_SERVICE_ROLE_KEY is not set. Returning mock admin data.')
-      return NextResponse.json(getMockAdminData(user.id, user.email))
+    // If the service-role key is not configured we cannot read real users (RLS blocks the
+    // anon client). Return an EMPTY, honest dataset with a flag — never fabricated users.
+    if (!serviceRoleKey || serviceRoleKey.startsWith('your_')) {
+      console.warn('SUPABASE_SERVICE_ROLE_KEY is not set. Admin data unavailable.')
+      return NextResponse.json({
+        stats: { totalUsers: 0, totalMeds: 0, totalLogs: 0, complianceRate: 0 },
+        users: [],
+        serviceKeyMissing: true,
+      })
     }
 
     const adminClient = createClient(supabaseUrl!, serviceRoleKey, {
@@ -47,10 +52,20 @@ export async function GET(request: Request) {
       },
     })
 
-    // 3. Fetch all users from Supabase Auth admin API
-    const { data: { users: authUsers }, error: usersError } = await adminClient.auth.admin.listUsers()
-    if (usersError) {
-      throw new Error(`Failed to list users: ${usersError.message}`)
+    // 3. Fetch ALL users from Supabase Auth admin API.
+    // listUsers() is paginated (default 50/page); loop until a short page so the
+    // directory and totals don't silently omit users beyond the first page.
+    const authUsers: any[] = []
+    const PER_PAGE = 200
+    for (let page = 1; ; page++) {
+      const { data, error: usersError } = await adminClient.auth.admin.listUsers({ page, perPage: PER_PAGE })
+      if (usersError) {
+        throw new Error(`Failed to list users: ${usersError.message}`)
+      }
+      authUsers.push(...data.users)
+      if (data.users.length < PER_PAGE) break
+      // Safety cap to avoid an unbounded loop.
+      if (page >= 50) break
     }
 
     // 4. Fetch medications and logs bypassing RLS
@@ -78,12 +93,24 @@ export async function GET(request: Request) {
       // Calculate streak
       const streak = calculateAdherenceStreak(userLogs)
 
+      const todayLogDetails = [...todayLogs]
+        .sort((a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime())
+        .map((l) => ({
+          id: l.id,
+          status: l.status,
+          scheduled_time: l.scheduled_time,
+          taken_at: l.taken_at,
+          name: userMeds.find((m) => m.id === l.medication_id)?.name || 'Thuốc',
+        }))
+
       return {
         id: u.id,
         email: u.email,
+        name: (u.user_metadata as any)?.full_name || null,
         created_at: u.created_at,
         medCount: userMeds.length,
         todayLogs: { taken: logsTaken, total: logsTotal },
+        todayLogDetails,
         streak,
         medications: userMeds,
       }
@@ -107,6 +134,74 @@ export async function GET(request: Request) {
     })
   } catch (error) {
     return apiError('Admin API', error)
+  }
+}
+
+// Shared admin gate: authenticate, enforce the ADMIN_EMAILS allowlist, and return a
+// service-role client. On failure, `error` holds the response to return immediately.
+async function requireAdmin(): Promise<any> {
+  const client = await createServerClient()
+  const { data: { user }, error: authError } = await client.auth.getUser()
+  if (authError || !user) {
+    return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }), adminClient: null, user: null }
+  }
+  const adminEmails = (process.env.ADMIN_EMAILS ?? 'admin@medimate.ai')
+    .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean)
+  if (!adminEmails.includes((user.email ?? '').toLowerCase())) {
+    return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }), adminClient: null, user: null }
+  }
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!serviceRoleKey || serviceRoleKey.startsWith('your_')) {
+    return { error: NextResponse.json({ error: 'Chức năng này cần cấu hình SUPABASE_SERVICE_ROLE_KEY.' }, { status: 503 }), adminClient: null, user: null }
+  }
+  const adminClient = createClient(supabaseUrl!, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  return { error: null, adminClient, user }
+}
+
+// Create a new user account (admin only).
+export async function POST(request: Request) {
+  try {
+    const gate = await requireAdmin()
+    if (gate.error) return gate.error
+    const body = await request.json()
+    const email = String(body?.email || '').trim()
+    const password = String(body?.password || '')
+    const name = String(body?.name || '').trim().slice(0, 120)
+    if (!email || !email.includes('@') || password.length < 6) {
+      return NextResponse.json({ error: 'Email hợp lệ và mật khẩu tối thiểu 6 ký tự là bắt buộc.' }, { status: 400 })
+    }
+    const { data, error } = await gate.adminClient.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      ...(name ? { user_metadata: { full_name: name } } : {}),
+    })
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+    return NextResponse.json({ ok: true, id: data.user?.id })
+  } catch (error) {
+    return apiError('Admin API (create user)', error)
+  }
+}
+
+// Delete a user account by id (admin only). Cannot delete the currently signed-in admin.
+export async function DELETE(request: Request) {
+  try {
+    const gate = await requireAdmin()
+    if (gate.error) return gate.error
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get('id')
+    if (!id) return NextResponse.json({ error: 'Thiếu id người dùng.' }, { status: 400 })
+    if (id === gate.user.id) {
+      return NextResponse.json({ error: 'Không thể tự xoá tài khoản admin đang đăng nhập.' }, { status: 400 })
+    }
+    const { error } = await gate.adminClient.auth.admin.deleteUser(id)
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    return apiError('Admin API (delete user)', error)
   }
 }
 
@@ -145,53 +240,4 @@ function calculateAdherenceStreak(logs: any[]): number {
     }
   }
   return streak
-}
-
-function getMockAdminData(currentUserId: string, currentUserEmail: string | undefined) {
-  const email = currentUserEmail || 'admin@medimate.ai'
-  return {
-    stats: {
-      totalUsers: 3,
-      totalMeds: 8,
-      totalLogs: 42,
-      complianceRate: 85,
-    },
-    users: [
-      {
-        id: currentUserId,
-        email: email,
-        created_at: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString(),
-        medCount: 3,
-        todayLogs: { taken: 2, total: 3 },
-        streak: 4,
-        medications: [
-          { id: '1', name: 'Paracetamol', dosage: '500mg', frequency: 'Mỗi sáng', schedule: ['08:00'] },
-          { id: '2', name: 'Aspirin', dosage: '81mg', frequency: 'Mỗi tối', schedule: ['20:00'] }
-        ]
-      },
-      {
-        id: 'user-mock-2',
-        email: 'patient_lan@gmail.com',
-        created_at: new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString(),
-        medCount: 4,
-        todayLogs: { taken: 3, total: 4 },
-        streak: 8,
-        medications: [
-          { id: '3', name: 'Metformin', dosage: '850mg', frequency: 'Ngày 2 lần', schedule: ['07:00', '19:00'] },
-          { id: '4', name: 'Atorvastatin', dosage: '10mg', frequency: 'Mỗi tối', schedule: ['21:00'] }
-        ]
-      },
-      {
-        id: 'user-mock-3',
-        email: 'ong_tu@yahoo.com',
-        created_at: new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString(),
-        medCount: 1,
-        todayLogs: { taken: 0, total: 1 },
-        streak: 0,
-        medications: [
-          { id: '5', name: 'Amlodipine', dosage: '5mg', frequency: 'Mỗi sáng', schedule: ['06:00'] }
-        ]
-      }
-    ]
-  }
 }

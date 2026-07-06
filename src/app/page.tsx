@@ -2,33 +2,9 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/utils/supabase/client'
-import {
-  Activity,
-  Calendar,
-  CheckCircle,
-  Clock,
-  MessageSquare,
-  Plus,
-  Trash2,
-  User as UserIcon,
-  AlertTriangle,
-  Send,
-  LogOut,
-  Sparkles,
-  HelpCircle,
-  X,
-  Check,
-  RotateCcw,
-  Mic,
-  Camera,
-  Volume2,
-  Award,
-  Bell,
-  FileText,
-  Pencil,
-  ShieldAlert,
-  Users
-} from 'lucide-react'
+import { AddMedicationModal, EditMedicationModal, CaregiverModal, PatientDetailModal, AddUserModal, PrescriptionReviewModal } from '@/components/Modals'
+import { AuthScreen, AppHeader, BottomNav, ComingSoon, MMToggle } from '@/components/Chrome'
+import type { Tab } from '@/components/types'
 
 // Interfaces
 interface Medication {
@@ -215,12 +191,30 @@ const translations = {
   }
 }
 
+// Severity → banner styling (kept in sync with the admin severity chips) so the
+// system broadcast banner is colour-coded and icon-tagged by its severity.
+type BroadcastSeverity = 'info' | 'warning' | 'urgent'
+const BROADCAST_STYLE: Record<BroadcastSeverity, { bg: string; border: string; color: string; icon: string }> = {
+  info: { bg: '#EAF3EC', border: '#C9DCCF', color: 'var(--mm-primary-dark)', icon: 'campaign' },
+  warning: { bg: '#FBEEE0', border: '#F2D9B8', color: '#B06A2C', icon: 'warning' },
+  urgent: { bg: '#FDF1EF', border: '#F0D6D2', color: '#C0574E', icon: 'priority_high' },
+}
+const broadcastStyle = (s?: string) => BROADCAST_STYLE[(s as BroadcastSeverity)] ?? BROADCAST_STYLE.info
+
+// Achievement badge metadata (icon + bilingual label). Keyed by the VN string the app
+// stores in `badges`; unknown values fall back to the raw string.
+const BADGE_META: Record<string, { icon: string; vi: string; en: string }> = {
+  'Chiến binh mới': { icon: 'military_tech', vi: 'Chiến binh mới', en: 'New warrior' },
+  'Kỷ luật thép': { icon: 'fitness_center', vi: 'Kỷ luật thép', en: 'Iron discipline' },
+  'Tương tác an toàn': { icon: 'verified_user', vi: 'Tương tác an toàn', en: 'Safe interactions' },
+  'Trợ lý đắc lực': { icon: 'mic', vi: 'Trợ lý đắc lực', en: 'Voice pro' },
+}
+
 export default function Home() {
   const supabase = createClient()
 
   // State Variables
   const [lang, setLang] = useState<'vi' | 'en'>('vi')
-  const [isLightMode, setIsLightMode] = useState<boolean>(true)
   const t = translations[lang]
 
   const [user, setUser] = useState<any>(null)
@@ -269,11 +263,11 @@ export default function Home() {
   const [editMedPrescriptionName, setEditMedPrescriptionName] = useState('')
 
   // UI & Feature States
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'chat' | 'admin'>('dashboard')
+  const [activeTab, setActiveTab] = useState<Tab>('dashboard')
   const [isListening, setIsListening] = useState(false)
   const [selectedImage, setSelectedImage] = useState<{ data: string; mimeType: string } | null>(null)
-  const [caregiverEmail, setCaregiverEmail] = useState('mom@medimate.ai')
-  const [caregiverName, setCaregiverName] = useState('Mẹ')
+  const [caregiverEmail, setCaregiverEmail] = useState('')
+  const [caregiverName, setCaregiverName] = useState('')
   const [showCaregiverModal, setShowCaregiverModal] = useState(false)
   const [caregiverAlerts, setCaregiverAlerts] = useState<string[]>([])
   const [badges, setBadges] = useState<string[]>([])
@@ -290,16 +284,117 @@ export default function Home() {
     users: Array<{
       id: string
       email: string
+      name?: string | null
       created_at: string
       medCount: number
       todayLogs: { taken: number; total: number }
+      todayLogDetails?: any[]
       streak: number
       medications: any[]
     }>
+    serviceKeyMissing?: boolean
   } | null>(null)
   const [loadingAdmin, setLoadingAdmin] = useState(false)
   const [selectedAdminUser, setSelectedAdminUser] = useState<any | null>(null)
+  const [patientSearch, setPatientSearch] = useState('')
+  const [weekOffset, setWeekOffset] = useState(0)
+  const [showProfile, setShowProfile] = useState(false)
+  const [prescriptionReview, setPrescriptionReview] = useState<Medication[] | null>(null)
+  const [fontScale, setFontScale] = useState<'sm' | 'md' | 'lg'>('md')
+  const [pushReminders, setPushReminders] = useState(true)
+  const [emailReminders, setEmailReminders] = useState(false)
+  // Mobile-only bottom nav: render it purely from the layout viewport width
+  // (independent of CSS media queries / cache / element zoom) so it never shows on desktop.
+  const [isMobileNav, setIsMobileNav] = useState(false)
+  useEffect(() => {
+    const check = () => setIsMobileNav(window.innerWidth < 768)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+
+  // Deep-linking: open the tab named in ?tab= (from /admin, /schedule … redirect routes).
+  useEffect(() => {
+    if (!user) return
+    const tab = new URLSearchParams(window.location.search).get('tab')
+    const valid = ['dashboard', 'schedule', 'chat', 'stats', 'admin']
+    if (!tab || !valid.includes(tab)) return
+    setActiveTab(tab === 'admin' && !isAdmin ? 'dashboard' : (tab as Tab))
+  }, [user, isAdmin])
+
+  // Weekly adherence stats (current Mon–Sun), read straight from medication_logs (RLS-scoped).
+  const [weekly, setWeekly] = useState<null | {
+    byDay: { label: string; pct: number | null }[]
+    byMed: { name: string; taken: number; total: number; pct: number }[]
+    weekPct: number; taken: number; total: number
+  }>(null)
+  useEffect(() => {
+    if (activeTab !== 'stats' || !user) return
+    let cancelled = false
+    ;(async () => {
+      const now = new Date()
+      const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      const monday = new Date(todayMid)
+      monday.setDate(todayMid.getDate() - ((todayMid.getDay() + 6) % 7))
+      const start = new Date(monday)
+      const end = new Date(monday); end.setDate(monday.getDate() + 6); end.setHours(23, 59, 59, 999)
+      const { data, error } = await supabase
+        .from('medication_logs')
+        .select('scheduled_time,status,medication_id')
+        .gte('scheduled_time', start.toISOString())
+        .lte('scheduled_time', end.toISOString())
+      if (cancelled) return
+      if (error || !data) { setWeekly({ byDay: [], byMed: [], weekPct: 0, taken: 0, total: 0 }); return }
+      const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+      const labels = lang === 'vi' ? ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+      const byDay = labels.map((label, i) => {
+        const d = new Date(monday); d.setDate(monday.getDate() + i)
+        const isFuture = d > todayMid
+        const dayLogs = data.filter((l) => sameDay(new Date(l.scheduled_time), d))
+        const total = dayLogs.length
+        const taken = dayLogs.filter((l) => l.status === 'taken').length
+        return { label, pct: (isFuture || total === 0) ? null : Math.round((taken / total) * 100) }
+      })
+      const nameById = new Map(medications.map((m) => [m.id, m.name]))
+      const past = data.filter((l) => new Date(l.scheduled_time) <= now)
+      const medMap = new Map<string, { taken: number; total: number }>()
+      for (const l of past) {
+        const name = nameById.get(l.medication_id) || 'Thuốc'
+        const e = medMap.get(name) || { taken: 0, total: 0 }
+        e.total++; if (l.status === 'taken') e.taken++
+        medMap.set(name, e)
+      }
+      const byMed = [...medMap.entries()].map(([name, v]) => ({ name, taken: v.taken, total: v.total, pct: v.total > 0 ? Math.round((v.taken / v.total) * 100) : 0 })).sort((a, b) => b.pct - a.pct)
+      const total = past.length
+      const taken = past.filter((l) => l.status === 'taken').length
+      setWeekly({ byDay, byMed, weekPct: total > 0 ? Math.round((taken / total) * 100) : 0, taken, total })
+    })()
+    return () => { cancelled = true }
+  }, [activeTab, user, medications, lang])
+
+  // Accessibility: scale the whole UI (zoom works on px-based styling).
+  useEffect(() => {
+    const saved = (typeof window !== 'undefined' && localStorage.getItem('medimate_fontScale')) as 'sm' | 'md' | 'lg' | null
+    if (saved === 'sm' || saved === 'md' || saved === 'lg') setFontScale(saved)
+  }, [])
+  useEffect(() => {
+    const map = { sm: '0.92', md: '1', lg: '1.12' } as const
+    document.documentElement.style.setProperty('zoom', map[fontScale])
+    if (typeof window !== 'undefined') localStorage.setItem('medimate_fontScale', fontScale)
+  }, [fontScale])
   const [broadcastMessage, setBroadcastMessage] = useState('')
+  const [broadcastTitle, setBroadcastTitle] = useState('')
+  const [broadcastSeverity, setBroadcastSeverity] = useState<'info' | 'warning' | 'urgent'>('info')
+  // Latest system broadcast (shown as a banner to all users)
+  const [latestBroadcast, setLatestBroadcast] = useState<{ id?: string; message: string; title?: string | null; severity?: string; created_at: string } | null>(null)
+  // Remember which broadcast the user dismissed so the banner stays closed on reload.
+  const [dismissedBroadcast, setDismissedBroadcast] = useState<string | null>(null)
+  // Admin: create-user modal state
+  const [showAddUserModal, setShowAddUserModal] = useState(false)
+  const [newUserEmail, setNewUserEmail] = useState('')
+  const [newUserPassword, setNewUserPassword] = useState('')
+  const [newUserName, setNewUserName] = useState('')
+  const [creatingUser, setCreatingUser] = useState(false)
 
   const imageInputRef = useRef<HTMLInputElement>(null)
 
@@ -321,21 +416,49 @@ export default function Home() {
     })
   }, [medications, logs])
 
-  // Caregiver alert trigger helper
-  const triggerCaregiverEscalation = (medName: string, time: string) => {
-    const alertMsg = `📧 [MÔ PHỎNG] [${t.guardianAlert}] ${t.guardianAlertSent} ${caregiverName} (${caregiverEmail}) ${t.dueToMissed} ${medName} (lịch: ${time})!`
+  // Sends a caregiver alert via /api/sos. Returns { delivered, simulated }.
+  // Real email is sent when RESEND_API_KEY is configured server-side; otherwise it is a
+  // clearly-labelled simulation.
+  const sendSosAlert = async (detail: string) => {
+    try {
+      const res = await fetch('/api/sos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caregiverName, caregiverEmail, detail }),
+      })
+      return await res.json()
+    } catch {
+      return { delivered: false, simulated: true }
+    }
+  }
+
+  // Caregiver alert trigger helper (auto escalation on missed dose)
+  const triggerCaregiverEscalation = async (medName: string, time: string) => {
+    const result = await sendSosAlert(`Bỏ lỡ/trễ liều ${medName} (lịch ${time}).`)
+    const tag = result?.delivered ? 'ĐÃ GỬI EMAIL' : 'MÔ PHỎNG'
+    const alertMsg = `📧 [${tag}] ${t.guardianAlertSent} ${caregiverName} (${caregiverEmail}) ${t.dueToMissed} ${medName} (lịch: ${time})!`
     setCaregiverAlerts((prev) => [alertMsg, ...prev])
   }
 
-  const handleTriggerSOSTest = () => {
+  const handleTriggerSOSTest = async () => {
+    if (!caregiverEmail.trim()) {
+      alert(lang === 'vi' ? 'Vui lòng thiết lập người bảo hộ (tên + email) trước khi gửi cảnh báo.' : 'Please set a caregiver (name + email) before sending an alert.')
+      setShowCaregiverModal(true)
+      return
+    }
     const timeStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-    const alertMsg = `🚨 [MÔ PHỎNG SOS] Đây là bản trình diễn — tín hiệu khẩn cấp sẽ được gửi tới Người bảo hộ ${caregiverName} (${caregiverEmail}) lúc ${timeStr}. (Bản production sẽ gửi Email/SMS thật.)`
+    const result = await sendSosAlert('Kiểm tra tín hiệu khẩn cấp (SOS Test).')
+    const delivered = !!result?.delivered
+    const tag = delivered ? 'ĐÃ GỬI EMAIL' : 'MÔ PHỎNG'
+    const alertMsg = `🚨 [${tag} SOS] Tín hiệu khẩn cấp tới Người bảo hộ ${caregiverName} (${caregiverEmail}) lúc ${timeStr}.`
     setCaregiverAlerts((prev) => [alertMsg, ...prev])
     setMessages((prev) => [
       ...prev,
       {
         role: 'model',
-        content: `🚨 **Mô phỏng cảnh báo khẩn cấp (SOS Demo)** — trong bản production, hệ thống sẽ gửi Email/SMS tới người bảo hộ **${caregiverName}** (${caregiverEmail}). Đây là bản trình diễn nên hiện chưa gửi thật.`,
+        content: delivered
+          ? `🚨 **Đã gửi email cảnh báo khẩn cấp** tới người bảo hộ **${caregiverName}** (${caregiverEmail}).`
+          : `🚨 **Mô phỏng cảnh báo khẩn cấp (SOS Demo)** — cấu hình \`RESEND_API_KEY\` để gửi email thật. Người bảo hộ: **${caregiverName}** (${caregiverEmail}).`,
       },
     ])
   }
@@ -425,8 +548,8 @@ export default function Home() {
       const savedLang = localStorage.getItem('medimate_lang')
       if (savedLang === 'vi' || savedLang === 'en') setLang(savedLang)
 
-      const savedMode = localStorage.getItem('medimate_isLightMode')
-      if (savedMode !== null) setIsLightMode(savedMode === 'true')
+      // Light-only theme (MediMate redesign): dark mode retired — always run light,
+      // ignore any previously saved dark preference.
 
       const savedCaregiverName = localStorage.getItem('medimate_caregiverName')
       if (savedCaregiverName) setCaregiverName(savedCaregiverName)
@@ -440,8 +563,82 @@ export default function Home() {
           setCaregiverAlerts(JSON.parse(savedCaregiverAlerts))
         } catch (_) {}
       }
+
+      const savedPush = localStorage.getItem('medimate_pushReminders')
+      if (savedPush !== null) setPushReminders(savedPush === 'true')
+      const savedEmail = localStorage.getItem('medimate_emailReminders')
+      if (savedEmail !== null) setEmailReminders(savedEmail === 'true')
     }
   }, [])
+
+  // Persist reminder preferences
+  useEffect(() => {
+    if (typeof window !== 'undefined') localStorage.setItem('medimate_pushReminders', String(pushReminders))
+  }, [pushReminders])
+  useEffect(() => {
+    if (typeof window !== 'undefined') localStorage.setItem('medimate_emailReminders', String(emailReminders))
+  }, [emailReminders])
+
+  // Schedule in-browser push reminders for today's still-pending doses (fires while the
+  // app tab is open — the honest client-only reminder path, no server cron required).
+  useEffect(() => {
+    if (!user || !pushReminders) return
+    if (typeof window === 'undefined' || !('Notification' in window) || Notification.permission !== 'granted') return
+    const now = Date.now()
+    const timers: number[] = []
+    logs.filter((l) => l.status === 'scheduled').forEach((l) => {
+      const delay = new Date(l.scheduled_time).getTime() - now
+      if (delay > 0 && delay < 24 * 3600 * 1000) {
+        const id = window.setTimeout(() => {
+          try {
+            new Notification(lang === 'vi' ? 'MediMate — Nhắc uống thuốc' : 'MediMate — Medication reminder', {
+              body: `${l.medication?.name ?? ''} · ${l.medication?.dosage ?? ''}`.trim(),
+            })
+          } catch (_) {}
+        }, delay)
+        timers.push(id)
+      }
+    })
+    return () => timers.forEach((tId) => clearTimeout(tId))
+  }, [pushReminders, logs, user, lang])
+
+  // Toggle push reminders, requesting browser notification permission when enabling.
+  const togglePushReminders = async () => {
+    const next = !pushReminders
+    if (next && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      try { await Notification.requestPermission() } catch (_) {}
+    }
+    if (next && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'denied') {
+      alert(lang === 'vi' ? 'Trình duyệt đang chặn thông báo. Hãy bật quyền Thông báo cho trang này để nhận nhắc nhở.' : 'Notifications are blocked. Please allow notifications for this site to receive reminders.')
+    }
+    setPushReminders(next)
+  }
+
+  // Snooze a dose: schedule a local browser reminder N minutes later (works while the tab
+  // is open) and acknowledge in the chat thread.
+  const handleSnooze = (log: MedicationLog, minutes = 15) => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') { try { Notification.requestPermission() } catch (_) {} }
+      if (Notification.permission === 'granted') {
+        window.setTimeout(() => {
+          try {
+            new Notification(lang === 'vi' ? 'MediMate — Nhắc lại' : 'MediMate — Reminder', {
+              body: `${log.medication?.name ?? ''} · ${log.medication?.dosage ?? ''}`.trim(),
+            })
+          } catch (_) {}
+        }, minutes * 60000)
+      }
+    }
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: 'model',
+        content: lang === 'vi'
+          ? `⏰ Đã hoãn nhắc **${log.medication?.name}** thêm ${minutes} phút.`
+          : `⏰ Snoozed **${log.medication?.name}** for ${minutes} minutes.`,
+      },
+    ])
+  }
 
   // Persist language to localStorage
   useEffect(() => {
@@ -449,13 +646,6 @@ export default function Home() {
       localStorage.setItem('medimate_lang', lang)
     }
   }, [lang])
-
-  // Persist light mode theme to localStorage
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('medimate_isLightMode', isLightMode ? 'true' : 'false')
-    }
-  }, [isLightMode])
 
   // Persist caregiver alerts to localStorage
   useEffect(() => {
@@ -880,20 +1070,27 @@ export default function Home() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           message: userText,
-          image: imagePayload 
+          image: imagePayload,
+          lang,
         }),
       })
 
       const data = await res.json()
 
       if (data.error) {
-        setMessages((prev) => [...prev, { role: 'system', content: `❌ Lỗi: ${data.error}` }])
+        setMessages((prev) => [...prev, { role: 'system', content: `❌ ${lang === 'vi' ? 'Lỗi' : 'Error'}: ${data.error}` }])
       } else if (data.action === 'WARNING_INTERACTION') {
         // We received a drug interaction warning!
         setWarningInfo(data.warning)
         setMessages((prev) => [...prev, { role: 'model', content: data.message }])
+        // Some meds in a multi-drug prescription may already have been saved (only the
+        // flagged one is held back), so refresh the list to reflect them.
+        if (Array.isArray(data.savedMeds) && data.savedMeds.length > 0) {
+          fetchMedications(true)
+          fetchTodayLogs(true)
+        }
       } else {
         // Success response
         setMessages((prev) => [...prev, { role: 'model', content: data.message }])
@@ -901,6 +1098,10 @@ export default function Home() {
         if (data.action === 'MEDICATION_ADDED' || data.action === 'LOG_RECORDED') {
           fetchMedications(true)
           fetchTodayLogs(true)
+        }
+        // After a prescription scan, surface a review of exactly what the AI extracted.
+        if (data.action === 'MEDICATION_ADDED' && Array.isArray(data.medications) && data.medications.length > 0 && (data.fromImage || imagePayload)) {
+          setPrescriptionReview(data.medications)
         }
       }
     } catch (err) {
@@ -948,1549 +1149,1209 @@ export default function Home() {
     }
   }
 
-  return (
-    <div className={`flex flex-col min-h-screen font-sans selection:bg-teal-500 selection:text-slate-900 transition-colors duration-300 ${
-      isLightMode 
-        ? 'bg-slate-50 text-slate-900' 
-        : 'bg-slate-950 text-slate-100'
-    }`}>
-      {/* Background gradients */}
-      {!isLightMode && (
-        <>
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-teal-900/20 via-slate-950 to-slate-950 pointer-events-none z-0" />
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_left,_var(--tw-gradient-stops))] from-indigo-900/10 via-slate-950 to-slate-950 pointer-events-none z-0" />
-        </>
-      )}
-      {isLightMode && (
-        <div className="absolute inset-0 bg-gradient-to-br from-amber-50/20 via-slate-50 to-slate-100/50 pointer-events-none z-0" />
-      )}
+  // Show/hide password toggle for the auth form (MediMate redesign)
+  const [showAuthPassword, setShowAuthPassword] = useState(false)
 
+  // Export the admin patient-adherence directory as a CSV report (no external deps).
+  const handleExportReport = () => {
+    if (!adminData) return
+    const header = ['Email', 'Ngày tạo', 'Số thuốc', 'Chuỗi (ngày)', 'Đã uống hôm nay', 'Tổng liều hôm nay', 'Tuân thủ hôm nay (%)']
+    const rows = adminData.users.map((u: any) => {
+      const rate = u.todayLogs.total > 0 ? Math.round((u.todayLogs.taken / u.todayLogs.total) * 100) : 0
+      return [u.email, new Date(u.created_at).toLocaleDateString('vi-VN'), u.medCount, u.streak, u.todayLogs.taken, u.todayLogs.total, rate]
+    })
+    const esc = (c: unknown) => `"${String(c).replace(/"/g, '""')}"`
+    const csv = [header, ...rows].map((r) => r.map(esc).join(',')).join('\r\n')
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `medimate-bao-cao-tuan-thu-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  // --- Admin: create / delete user ---
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setCreatingUser(true)
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: newUserEmail, password: newUserPassword, name: newUserName }),
+      })
+      const data = await res.json()
+      if (!res.ok) { alert(data.error || (lang === 'vi' ? 'Không tạo được tài khoản.' : 'Failed to create user.')); return }
+      setShowAddUserModal(false); setNewUserEmail(''); setNewUserPassword(''); setNewUserName('')
+      fetchAdminData(true)
+    } catch {
+      alert(lang === 'vi' ? 'Lỗi kết nối.' : 'Connection error.')
+    } finally {
+      setCreatingUser(false)
+    }
+  }
+
+  const handleDeleteUser = async (id: string, email: string) => {
+    if (!confirm(lang === 'vi' ? `Xoá tài khoản ${email}? Hành động này không thể hoàn tác.` : `Delete ${email}? This cannot be undone.`)) return
+    try {
+      const res = await fetch(`/api/admin/users?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!res.ok) { alert(data.error || (lang === 'vi' ? 'Không xoá được tài khoản.' : 'Failed to delete.')); return }
+      setSelectedAdminUser(null)
+      fetchAdminData(true)
+    } catch {
+      alert(lang === 'vi' ? 'Lỗi kết nối.' : 'Connection error.')
+    }
+  }
+
+  // Load the latest system broadcast for the banner shown to all users
+  useEffect(() => {
+    if (!user) return
+    if (typeof window !== 'undefined') {
+      setDismissedBroadcast(localStorage.getItem('medimate_dismissedBroadcast'))
+    }
+    fetch('/api/broadcast')
+      .then((r) => r.json())
+      .then((d) => setLatestBroadcast(d?.broadcast || null))
+      .catch(() => {})
+  }, [user])
+
+  // Dismiss the current broadcast banner (remembered per broadcast id / timestamp).
+  const dismissBroadcast = () => {
+    const key = latestBroadcast?.id || latestBroadcast?.created_at || ''
+    setDismissedBroadcast(key)
+    if (typeof window !== 'undefined') localStorage.setItem('medimate_dismissedBroadcast', key)
+  }
+
+  return (
+    <div className="flex flex-col h-screen overflow-hidden font-sans" style={{ background: 'var(--mm-bg)', color: 'var(--mm-text)' }}>
       {/* Auth Screen */}
       {!user ? (
-        <div className="flex flex-col items-center justify-center flex-1 px-4 py-12 z-10">
-          <div className={`w-full max-w-md backdrop-blur-md rounded-3xl p-8 shadow-2xl relative overflow-hidden border transition-all ${
-            isLightMode ? 'bg-white border-slate-200/80 text-slate-800' : 'bg-slate-900/60 border-slate-800 text-slate-100'
-          }`}>
-            <div className="absolute -top-10 -left-10 w-40 h-40 bg-teal-500/10 rounded-full blur-2xl pointer-events-none" />
-            <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
-            
-            <div className="flex flex-col items-center text-center mb-8">
-              <div className="w-16 h-16 bg-gradient-to-tr from-teal-400 to-indigo-500 rounded-2xl flex items-center justify-center shadow-lg shadow-teal-500/20 mb-4 animate-pulse">
-                <Activity className="w-9 h-9 text-slate-900" />
-              </div>
-              <h1 className={`text-3xl font-black tracking-tight ${
-                isLightMode ? 'text-teal-600' : 'bg-gradient-to-r from-teal-300 to-indigo-300 bg-clip-text text-transparent'
-              }`}>
-                MediMate AI
-              </h1>
-              <p className={`text-sm mt-2 font-medium ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                AI-powered medication reminder & safety agent
-              </p>
-            </div>
-
-            <form onSubmit={handleAuth} className="space-y-4">
-              <div>
-                <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                  isLightMode ? 'text-slate-600' : 'text-slate-400'
-                }`}>
-                  Email
-                </label>
-                <input
-                  type="email"
-                  value={authEmail}
-                  onChange={(e) => setAuthEmail(e.target.value)}
-                  className={`w-full rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-teal-500 transition-colors border ${
-                    isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950/80 border-slate-800 text-slate-100'
-                  }`}
-                  placeholder="name@domain.com"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                  isLightMode ? 'text-slate-600' : 'text-slate-400'
-                }`}>
-                  Mật khẩu
-                </label>
-                <input
-                  type="password"
-                  value={authPassword}
-                  onChange={(e) => setAuthPassword(e.target.value)}
-                  className={`w-full rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-teal-500 transition-colors border ${
-                    isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950/80 border-slate-800 text-slate-100'
-                  }`}
-                  placeholder="••••••••"
-                  required
-                />
-              </div>
-
-              {authError && (
-                <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-xs text-rose-400 flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span>{authError}</span>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={authLoading}
-                className="w-full bg-gradient-to-r from-teal-400 to-teal-500 hover:from-teal-500 hover:to-teal-600 text-slate-900 font-bold py-3 rounded-xl transition-all shadow-lg shadow-teal-500/15 text-sm cursor-pointer"
-              >
-                {authLoading ? 'Đang xử lý...' : authMode === 'login' ? 'Đăng Nhập' : 'Đăng Ký'}
-              </button>
-            </form>
-
-            <div className="mt-6 flex flex-col items-center gap-4 text-center w-full">
-              <button
-                onClick={() => setAuthMode((m) => (m === 'login' ? 'signup' : 'login'))}
-                className={`text-xs font-bold cursor-pointer hover:underline ${
-                  isLightMode ? 'text-teal-600 hover:text-teal-700' : 'text-teal-400'
-                }`}
-              >
-                {authMode === 'login' ? 'Chưa có tài khoản? Đăng ký ngay' : 'Đã có tài khoản? Đăng nhập'}
-              </button>
-
-              <div className={`w-full flex items-center my-1 ${isLightMode ? 'text-slate-400' : 'text-slate-600'}`}>
-                <div className={`flex-grow border-t ${isLightMode ? 'border-slate-200' : 'border-slate-800'}`} />
-                <span className="px-3 text-xs uppercase tracking-wider font-semibold">Hoặc</span>
-                <div className={`flex-grow border-t ${isLightMode ? 'border-slate-200' : 'border-slate-800'}`} />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 w-full">
-                <button
-                  type="button"
-                  onClick={() => handleQuickSignIn('admin')}
-                  disabled={authLoading}
-                  className={`border py-3 px-2 rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs cursor-pointer font-bold ${
-                    isLightMode 
-                      ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100 shadow-sm' 
-                      : 'bg-slate-950/60 border-slate-800 text-rose-400 hover:text-rose-300'
-                  }`}
-                >
-                  <ShieldAlert className="w-4 h-4" />
-                  Đăng Nhập Admin
-                </button>
-                
-                <button
-                  type="button"
-                  onClick={() => handleQuickSignIn('user')}
-                  disabled={authLoading}
-                  className={`border py-3 px-2 rounded-xl transition-all flex items-center justify-center gap-1.5 text-xs cursor-pointer font-bold ${
-                    isLightMode 
-                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 shadow-sm' 
-                      : 'bg-slate-950/60 border-slate-800 text-indigo-300 hover:text-indigo-200'
-                  }`}
-                >
-                  <UserIcon className="w-4 h-4" />
-                  Đăng Nhập User
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <AuthScreen lang={lang} setLang={setLang} authMode={authMode} setAuthMode={setAuthMode} authEmail={authEmail} setAuthEmail={setAuthEmail} authPassword={authPassword} setAuthPassword={setAuthPassword} showAuthPassword={showAuthPassword} setShowAuthPassword={setShowAuthPassword} authError={authError} authLoading={authLoading} handleAuth={handleAuth} handleQuickSignIn={handleQuickSignIn} />
       ) : (
         /* App Main Screen */
-        <div className="flex flex-col flex-grow z-10 max-h-screen">
+        <div className="flex flex-col flex-1 min-h-0 z-10">
           
           {/* Header */}
-          <header className={`border-b px-6 py-4 flex items-center justify-between transition-colors duration-300 ${
-            isLightMode ? 'border-slate-200 bg-white/90 text-slate-900' : 'border-slate-900 bg-slate-950/80 text-slate-100 backdrop-blur-md'
-          }`}>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-tr from-teal-400 to-indigo-500 rounded-xl flex items-center justify-center shadow-md shadow-teal-500/10">
-                <Activity className="w-5 h-5 text-slate-900" />
-              </div>
-              <div>
-                <h1 className={`text-xl font-bold flex items-center gap-2 ${
-                  isLightMode ? 'text-teal-600' : 'bg-gradient-to-r from-teal-300 to-indigo-300 bg-clip-text text-transparent'
-                }`}>
-                  MediMate AI
-                  <span className="flex h-2 w-2 relative">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                </h1>
-                <p className={`text-[10px] uppercase tracking-widest font-semibold ${isLightMode ? 'text-slate-500' : 'text-slate-500'}`}>
-                  Personal Health Agent
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => setLang(lang === 'vi' ? 'en' : 'vi')}
-                className={`px-2.5 py-1 border hover:border-teal-500/50 rounded-full text-xs font-semibold cursor-pointer select-none transition-all flex items-center gap-1 ${
-                  isLightMode ? 'bg-slate-100 border-slate-200 text-slate-700' : 'bg-slate-900 border-slate-800 text-slate-300'
-                }`}
-              >
-                <span>{lang === 'vi' ? '🇻🇳' : '🇬🇧'}</span>
-                <span>{lang === 'vi' ? 'VI' : 'EN'}</span>
-              </button>
-
-              <button
-                onClick={() => setIsLightMode(!isLightMode)}
-                className={`px-3 py-1.5 border hover:border-teal-500/50 rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5 select-none ${
-                  isLightMode ? 'bg-slate-100 border-slate-200 text-slate-700' : 'bg-slate-900 border-slate-800 text-slate-300'
-                }`}
-              >
-                <span>{isLightMode ? "🌙" : "☀️"}</span>
-                <span className="hidden sm:inline">
-                  {isLightMode ? (lang === 'vi' ? "Chế độ tối" : "Dark Mode") : (lang === 'vi' ? "Chế độ sáng" : "Light Mode")}
-                </span>
-              </button>
-
-              {isAdmin && (
-                <button
-                  onClick={() => setActiveTab(activeTab === 'admin' ? 'dashboard' : 'admin')}
-                  className={`hidden md:flex px-3 py-1.5 border rounded-xl text-xs font-semibold items-center gap-1.5 cursor-pointer transition-all ${
-                    activeTab === 'admin' 
-                      ? 'bg-teal-500/20 border-teal-500 text-teal-400' 
-                      : (isLightMode ? 'bg-slate-100 border-slate-200 text-slate-700 hover:border-teal-500/30' : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-teal-500/30')
-                  }`}
-                >
-                  <ShieldAlert className="w-3.5 h-3.5" />
-                  <span>{lang === 'vi' ? 'Quản trị' : 'Admin'}</span>
-                </button>
-              )}
-
-              <div className={`hidden sm:flex items-center gap-2 px-3 py-1.5 border rounded-full text-xs font-semibold ${
-                isLightMode ? 'bg-slate-100 border-slate-200 text-slate-700' : 'bg-slate-900 border-slate-800 text-slate-300'
-              }`}>
-                <UserIcon className="w-3.5 h-3.5 text-slate-400" />
-                <span className="font-medium">{user.email}</span>
-              </div>
-
-              <button
-                onClick={handleSignOut}
-                className={`p-2 rounded-lg transition-colors cursor-pointer ${
-                  isLightMode ? 'text-slate-500 hover:text-rose-600 hover:bg-slate-100' : 'text-slate-400 hover:text-rose-400 hover:bg-slate-900'
-                }`}
-                title={t.logout}
-              >
-                <LogOut className="w-5 h-5" />
-              </button>
-            </div>
-          </header>
+          <AppHeader lang={lang} setLang={setLang} activeTab={activeTab} setActiveTab={setActiveTab} isAdmin={!!isAdmin} streak={streak} user={user} handleSignOut={handleSignOut} onProfile={() => setShowProfile(true)} t={t} />
 
           {/* Main Workspace Layout */}
-          <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
+          <main className="flex-1 min-h-0 flex flex-col overflow-hidden">
             
             {/* Left Panel: Dashboard (50%) */}
-            <section className={`flex-1 md:max-w-[50%] border-r flex flex-col overflow-y-auto p-6 space-y-6 pb-24 md:pb-6 transition-colors duration-300 ${
-              isLightMode ? 'border-slate-200 bg-slate-50/50' : 'border-slate-900 bg-slate-950/20'
-            } ${activeTab === 'dashboard' ? 'flex' : (activeTab === 'admin' ? 'hidden' : 'hidden md:flex')}`}>
-              
-              {/* Banner: Liều thuốc tiếp theo */}
-              {(() => {
-                const nextDose = getNextScheduledDose()
-                if (!nextDose) return null
-                const nextDoseTime = new Date(nextDose.scheduled_time).toLocaleTimeString(lang === 'vi' ? 'vi-VN' : 'en-US', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })
+            <section className={`flex-1 min-h-0 flex-col overflow-y-auto p-6 md:p-8 pb-24 md:pb-8 ${activeTab === 'dashboard' ? 'flex' : 'hidden'}`} style={{ background: 'var(--mm-bg)', gap: '20px' }}>
+
+              {/* System broadcast banner — colour + icon match the severity, with a close button */}
+              {latestBroadcast && (latestBroadcast.id || latestBroadcast.created_at) !== dismissedBroadcast && (() => {
+                const bs = broadcastStyle(latestBroadcast.severity)
                 return (
-                  <div className={`p-5 rounded-2xl border-2 flex items-center justify-between shrink-0 shadow-lg transition-colors ${
-                    isLightMode 
-                      ? 'bg-rose-50 border-rose-200 text-slate-800' 
-                      : 'bg-rose-950/20 border-rose-900/40 text-slate-100'
-                  }`}>
-                    <div className="flex items-center gap-3.5">
-                      <div className="w-12 h-12 bg-rose-500/10 rounded-2xl flex items-center justify-center text-xl text-rose-500 animate-pulse">
-                        🔔
-                      </div>
-                      <div>
-                        <div className={`text-[10px] uppercase tracking-widest font-black ${isLightMode ? 'text-rose-600' : 'text-rose-400'}`}>
-                          {lang === 'vi' ? 'Khung giờ tiếp theo' : 'Next upcoming dosage'}
-                        </div>
-                        <div className="text-lg font-black mt-0.5">
-                          {nextDose.medication?.name} - {nextDoseTime}
-                        </div>
-                        <p className={`text-xs mt-0.5 font-bold ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                          {lang === 'vi' ? `Liều lượng: ${nextDose.medication?.dosage_quantity ?? 1} viên (${nextDose.medication?.dosage})` : `Dosage: ${nextDose.medication?.dosage_quantity ?? 1} pill (${nextDose.medication?.dosage})`}
-                        </p>
-                      </div>
+                  <div style={{ background: bs.bg, border: `1px solid ${bs.border}`, borderRadius: '14px', padding: '13px 16px', display: 'flex', alignItems: 'flex-start', gap: '10px', flexShrink: 0 }}>
+                    <span className="ms" style={{ fontSize: '20px', color: bs.color, flexShrink: 0 }}>{bs.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0, fontSize: '13.5px', color: 'var(--mm-text-muted)', lineHeight: 1.5 }}>
+                      <strong style={{ color: bs.color }}>{latestBroadcast.title?.trim() || (lang === 'vi' ? 'Thông báo hệ thống' : 'System notice')}: </strong>{latestBroadcast.message}
                     </div>
-                    <button
-                      onClick={() => handleToggleLogStatus(nextDose.id, nextDose.status)}
-                      className="px-4 py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-black rounded-xl text-xs shadow-md shadow-rose-500/20 transition-all cursor-pointer min-h-[48px] flex items-center justify-center"
-                    >
-                      {lang === 'vi' ? 'Uống ngay ✅' : 'Take Now ✅'}
+                    <button type="button" onClick={dismissBroadcast} aria-label={lang === 'vi' ? 'Đóng thông báo' : 'Dismiss'} className="mm-icon-badge" style={{ width: '28px', height: '28px', borderRadius: '8px', background: 'transparent', color: bs.color, cursor: 'pointer', flexShrink: 0, border: 'none' }}>
+                      <span className="ms" style={{ fontSize: '18px' }}>close</span>
                     </button>
                   </div>
                 )
               })()}
 
-              {/* Daily Checklist Tracker (Moved to Top) */}
-              <div className={`border rounded-2xl p-6 relative overflow-hidden shrink-0 transition-all ${
-                isLightMode ? 'bg-white border-slate-200/80 shadow-sm text-slate-800' : 'bg-slate-900/40 border-slate-900 text-slate-100'
-              }`}>
-                <div className="absolute top-0 right-0 w-24 h-24 bg-teal-500/5 rounded-full blur-xl" />
-                
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <Calendar className="w-5 h-5 text-teal-500" />
-                    <h2 className="text-lg font-black">{t.todaySchedule}</h2>
+              {/* Greeting */}
+              {(() => {
+                const hour = new Date().getHours()
+                const greeting = lang === 'vi'
+                  ? (hour < 11 ? 'Chào buổi sáng' : hour < 14 ? 'Chào buổi trưa' : hour < 18 ? 'Chào buổi chiều' : 'Chào buổi tối')
+                  : (hour < 11 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening')
+                const displayName = user?.email ? user.email.split('@')[0] : ''
+                const dateStr = new Date().toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US', { weekday: 'long', day: 'numeric', month: 'long' })
+                const dosesLeft = logs.filter((l) => l.status === 'scheduled').length
+                return (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap', flexShrink: 0 }}>
+                    <div>
+                      <div style={{ fontSize: '26px', fontWeight: 800, letterSpacing: '-0.01em', color: 'var(--mm-text)' }}>{greeting}{displayName ? `, ${displayName}` : ''}</div>
+                      <div style={{ fontSize: '15px', color: 'var(--mm-text-muted)', marginTop: '4px', textTransform: 'capitalize' }}>
+                        {dateStr}{lang === 'vi'
+                          ? (dosesLeft > 0 ? ` · Hôm nay còn ${dosesLeft} liều cần uống` : ' · Hôm nay bạn đã hoàn thành lịch uống 🎉')
+                          : (dosesLeft > 0 ? ` · ${dosesLeft} doses left today` : ' · All doses done today 🎉')}
+                      </div>
+                    </div>
+                    <span className="mm-chip" style={{ background: '#EAF3EC', color: 'var(--mm-primary-dark)', padding: '9px 15px', fontSize: '14px' }}>
+                      <span className="ms" style={{ fontSize: '18px' }}>verified_user</span>{lang === 'vi' ? 'Đã kiểm tra tương tác thuốc' : 'Interactions checked'}
+                    </span>
                   </div>
-                  
-                  <span className={`text-xs px-2.5 py-1 border rounded-full font-bold ${
-                    isLightMode ? 'bg-teal-100 border-teal-200 text-teal-700' : 'bg-teal-505 bg-teal-500/10 border-teal-500/20 text-teal-400'
-                  }`}>
-                    {logs.filter(l => l.status === 'taken').length}/{logs.length} {t.taken}
-                  </span>
+                )
+              })()}
+
+              {medications.length === 0 && !loadingMeds ? (
+                /* Onboarding empty-state */
+                <div className="mm-card" style={{ padding: '48px 32px 52px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
+                  <span className="mm-icon-badge" style={{ width: '100px', height: '100px', borderRadius: '28px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', marginBottom: '22px' }}><span className="ms" style={{ fontSize: '54px' }}>medication_liquid</span></span>
+                  <div style={{ fontSize: '28px', fontWeight: 800, letterSpacing: '-0.01em', color: 'var(--mm-text)' }}>{lang === 'vi' ? `Chào ${user?.email ? user.email.split('@')[0] : 'bạn'}! Bắt đầu nào 👋` : `Hi ${user?.email ? user.email.split('@')[0] : 'there'}! Let’s get started 👋`}</div>
+                  <div style={{ fontSize: '16.5px', color: 'var(--mm-text-muted)', lineHeight: 1.6, maxWidth: '520px', marginTop: '12px' }}>{lang === 'vi' ? 'Bạn chưa có thuốc nào trong lịch. Chỉ cần chụp đơn thuốc — trợ lý AI sẽ tự đọc tên thuốc, liều lượng và lên lịch nhắc giúp bạn.' : 'You have no medications yet. Just snap your prescription — the AI reads the names, dosages and sets reminders for you.'}</div>
+                  <div style={{ display: 'flex', gap: '14px', marginTop: '30px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                    <button type="button" onClick={() => { setActiveTab('chat'); setTimeout(() => imageInputRef.current?.click(), 120) }} className="mm-btn mm-btn-primary" style={{ padding: '15px 24px', fontSize: '16px' }}><span className="ms" style={{ fontSize: '23px' }}>photo_camera</span>{lang === 'vi' ? 'Quét đơn thuốc' : 'Scan prescription'}</button>
+                    <button type="button" onClick={() => setShowAddModal(true)} className="mm-btn mm-btn-outline" style={{ padding: '15px 24px', fontSize: '16px' }}><span className="ms" style={{ fontSize: '23px' }}>edit</span>{lang === 'vi' ? 'Thêm thủ công' : 'Add manually'}</button>
+                  </div>
+                  <div style={{ display: 'flex', gap: '18px', marginTop: '44px', maxWidth: '820px', width: '100%', flexWrap: 'wrap', justifyContent: 'center' }}>
+                    {[
+                      { n: 1, vi: ['Chụp đơn thuốc', 'Chụp hoặc tải ảnh đơn của bác sĩ.'], en: ['Snap the prescription', 'Take or upload a photo of your doctor’s script.'] },
+                      { n: 2, vi: ['AI đọc & kiểm tra', 'Tự nhận thuốc, liều và cảnh báo tương tác.'], en: ['AI reads & checks', 'Extracts meds, dosages and flags interactions.'] },
+                      { n: 3, vi: ['Nhận nhắc đúng giờ', 'Nhắc uống mỗi ngày, theo dõi tuân thủ.'], en: ['Get timely reminders', 'Daily dose reminders and adherence tracking.'] },
+                    ].map((s) => (
+                      <div key={s.n} style={{ flex: '1 1 220px', minWidth: '200px', maxWidth: '250px', background: 'var(--mm-surface-2)', border: '1px solid var(--mm-border-warm)', borderRadius: '16px', padding: '22px 20px', textAlign: 'left' }}>
+                        <span className="mm-icon-badge" style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--mm-primary)', color: '#fff', fontWeight: 800, fontSize: '16px', marginBottom: '14px' }}>{s.n}</span>
+                        <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--mm-text)' }}>{lang === 'vi' ? s.vi[0] : s.en[0]}</div>
+                        <div style={{ fontSize: '14px', color: 'var(--mm-text-muted)', lineHeight: 1.5, marginTop: '5px' }}>{lang === 'vi' ? s.vi[1] : s.en[1]}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (<>
+              {/* Two-column: main + sidebar */}
+              <div className="mm-home-grid" style={{ display: 'flex', gap: '22px', alignItems: 'flex-start' }}>
+                {/* LEFT — hero + timeline */}
+                <div className="mm-home-main" style={{ flex: '1.65 1 0%', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  {/* Next dose hero */}
+                  {(() => {
+                    const nextDose = getNextScheduledDose()
+                    if (!nextDose) return (
+                      <div className="mm-card" style={{ padding: '26px', textAlign: 'center', color: 'var(--mm-text-faint)' }}>
+                        <span className="ms" style={{ fontSize: '40px', display: 'block', margin: '0 auto 8px', color: 'var(--mm-primary)' }}>task_alt</span>
+                        {lang === 'vi' ? 'Không có liều nào sắp tới. Bạn đang làm rất tốt!' : 'No upcoming dose. You are doing great!'}
+                      </div>
+                    )
+                    const nextDoseTime = new Date(nextDose.scheduled_time).toLocaleTimeString(lang === 'vi' ? 'vi-VN' : 'en-US', { hour: '2-digit', minute: '2-digit' })
+                    return (
+                      <div style={{ background: 'var(--mm-primary)', color: '#fff', borderRadius: '20px', padding: '26px 28px', position: 'relative', overflow: 'hidden' }}>
+                        <div style={{ position: 'absolute', right: '-40px', top: '-40px', width: '200px', height: '200px', borderRadius: '50%', background: 'rgba(255,255,255,0.06)' }} />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', fontWeight: 600, opacity: 0.9, letterSpacing: '0.02em', position: 'relative' }}>
+                          <span className="ms" style={{ fontSize: '18px' }}>schedule</span>{lang === 'vi' ? 'LIỀU KẾ TIẾP' : 'NEXT DOSE'} · {nextDoseTime}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '20px', marginTop: '14px', position: 'relative', flexWrap: 'wrap' }}>
+                          <div>
+                            <div style={{ fontSize: '32px', fontWeight: 800, lineHeight: 1.05 }}>{nextDose.medication?.name}</div>
+                            <div style={{ fontSize: '16px', opacity: 0.92, marginTop: '7px' }}>{nextDose.medication?.dosage_quantity ?? 1} {lang === 'vi' ? 'viên' : 'pill'} · {nextDose.medication?.dosage}</div>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '12px', marginTop: '22px', position: 'relative', flexWrap: 'wrap' }}>
+                          <button type="button" onClick={() => handleToggleLogStatus(nextDose.id, nextDose.status)} className="mm-btn" style={{ flex: 1, minWidth: '150px', background: '#fff', color: 'var(--mm-primary-dark)', fontSize: '17px', padding: '15px' }}>
+                            <span className="ms" style={{ fontSize: '22px' }}>check_circle</span>{lang === 'vi' ? 'Đã uống' : 'Taken'}
+                          </button>
+                          <button type="button" onClick={() => handleSnooze(nextDose, 15)} className="mm-btn" style={{ background: 'transparent', color: '#fff', border: '1.5px solid rgba(255,255,255,0.45)', fontSize: '16px', fontWeight: 600, padding: '15px 22px' }}>
+                            {lang === 'vi' ? 'Nhắc lại sau' : 'Snooze'}
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Today's schedule timeline */}
+                  <div className="mm-card" style={{ padding: '20px 22px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                      <div style={{ fontSize: '19px', fontWeight: 700, color: 'var(--mm-text)' }}>{t.todaySchedule}</div>
+                      <span style={{ fontSize: '14px', color: 'var(--mm-text-muted)', fontWeight: 500 }}>{logs.filter((l) => l.status === 'taken').length} / {logs.length} {t.taken}</span>
+                    </div>
+                    {loadingLogs ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <div style={{ height: '52px', background: '#F0EDE4', borderRadius: '14px' }} className="animate-pulse" />
+                        <div style={{ height: '52px', background: '#F0EDE4', borderRadius: '14px' }} className="animate-pulse" />
+                      </div>
+                    ) : logs.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '28px 0', color: 'var(--mm-text-faint)' }}>
+                        <span className="ms" style={{ fontSize: '34px', display: 'block', margin: '0 auto 8px' }}>event_available</span>
+                        {lang === 'vi' ? 'Chưa có lịch uống nào cho hôm nay.' : 'No doses scheduled for today.'}
+                      </div>
+                    ) : (
+                      <div style={{ maxHeight: '460px', overflowY: 'auto', paddingRight: '4px' }}>
+                        {(() => {
+                          const groupedByTime: Record<string, typeof logs> = {}
+                          logs.forEach((log) => {
+                            const timeKey = new Date(log.scheduled_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+                            if (!groupedByTime[timeKey]) groupedByTime[timeKey] = []
+                            groupedByTime[timeKey].push(log)
+                          })
+                          const entries = Object.entries(groupedByTime)
+                          return entries.map(([timeSlot, slotLogs], gi) => {
+                            const allTaken = slotLogs.every((l) => l.status === 'taken')
+                            const hasScheduled = slotLogs.some((l) => l.status === 'scheduled')
+                            const isLast = gi === entries.length - 1
+                            return (
+                              <div key={timeSlot} style={{ display: 'flex', gap: '14px', alignItems: 'stretch' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '52px', flexShrink: 0 }}>
+                                  <div style={{ fontSize: '13.5px', fontWeight: 700, color: hasScheduled ? 'var(--mm-primary)' : 'var(--mm-text-faint)' }}>{timeSlot}</div>
+                                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', marginTop: '8px', background: allTaken ? 'var(--mm-primary)' : '#fff', border: allTaken ? 'none' : '2px solid #C9CFC7' }} />
+                                  {!isLast && <div style={{ flex: 1, width: '2px', background: '#E0DED4', marginTop: '2px' }} />}
+                                </div>
+                                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '10px', paddingBottom: '14px' }}>
+                                  {hasScheduled && slotLogs.length > 1 && (
+                                    <button type="button" onClick={() => handleBatchTakeAll(slotLogs.filter((l) => l.status === 'scheduled'))} className="mm-btn mm-btn-outline" style={{ alignSelf: 'flex-start', padding: '6px 12px', fontSize: '12.5px', borderRadius: '999px' }}>
+                                      {lang === 'vi' ? 'Đã uống tất cả ✓' : 'Take all ✓'}
+                                    </button>
+                                  )}
+                                  {slotLogs.map((log) => {
+                                    const taken = log.status === 'taken'
+                                    const missed = log.status === 'missed'
+                                    return (
+                                      <div key={log.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', background: taken ? '#FBFAF6' : '#fff', border: '1px solid ' + (taken ? '#EDEAE0' : '#E6EFE8'), borderRadius: '14px', padding: '13px 16px', opacity: taken ? 0.72 : 1 }}>
+                                        <span className="mm-icon-badge" style={{ width: '40px', height: '40px', borderRadius: '11px', background: '#E6EFE8', color: 'var(--mm-primary)' }}>
+                                          <span className="ms" style={{ fontSize: '21px' }}>medication</span>
+                                        </span>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                          <div style={{ fontSize: '15.5px', fontWeight: 700, textDecoration: taken ? 'line-through' : 'none', textDecorationColor: '#B7C0B8', color: 'var(--mm-text)' }}>{log.medication?.name}</div>
+                                          <div style={{ fontSize: '13px', color: 'var(--mm-text-faint)' }}>{log.medication?.dosage_quantity ?? 1} {lang === 'vi' ? 'viên' : 'pill'} · {log.medication?.dosage}</div>
+                                        </div>
+                                        {taken ? (
+                                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'var(--mm-primary)', fontSize: '13.5px', fontWeight: 700 }}>
+                                            <span className="ms" style={{ fontSize: '18px' }}>check_circle</span>{t.taken}
+                                          </span>
+                                        ) : (
+                                          <button type="button" onClick={() => handleToggleLogStatus(log.id, log.status)} className="mm-btn mm-btn-primary" style={{ padding: '9px 15px', fontSize: '13.5px' }}>
+                                            {missed ? t.skippedBadge : (lang === 'vi' ? 'Uống' : 'Take')}
+                                          </button>
+                                        )}
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )
+                          })
+                        })()}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                {loadingLogs ? (
-                  <div className="space-y-3">
-                    <div className="h-12 bg-slate-800/40 animate-pulse rounded-xl" />
-                    <div className="h-12 bg-slate-800/40 animate-pulse rounded-xl" />
+                {/* RIGHT — sidebar */}
+                <div className="mm-home-side" style={{ flex: '1 1 0%', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {/* Adherence ring */}
+                  {(() => {
+                    const totalToday = logs.length
+                    const takenToday = logs.filter((l) => l.status === 'taken').length
+                    const pct = totalToday > 0 ? Math.round((takenToday / totalToday) * 100) : (streak > 0 ? 100 : 0)
+                    return (
+                      <div className="mm-card" style={{ padding: '20px 22px', display: 'flex', alignItems: 'center', gap: '20px' }}>
+                        <div style={{ width: '82px', height: '82px', borderRadius: '50%', background: `conic-gradient(var(--mm-primary) 0% ${pct}%, var(--mm-primary-soft) ${pct}% 100%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: 'var(--mm-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: 800, color: 'var(--mm-primary-dark)' }}>{pct}%</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--mm-text)' }}>{lang === 'vi' ? 'Tuân thủ hôm nay' : 'Adherence today'}</div>
+                          <div style={{ fontSize: '13.5px', color: 'var(--mm-text-muted)', marginTop: '3px', lineHeight: 1.4 }}>
+                            {lang === 'vi' ? <>Giữ trên 80% để duy trì<br />chuỗi {streak} ngày của bạn</> : <>Stay above 80% to keep<br />your {streak}-day streak</>}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Quick actions */}
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <button type="button" onClick={() => setActiveTab('chat')} className="mm-btn" style={{ flex: 1, flexDirection: 'column', gap: '8px', border: '1px solid var(--mm-border-warm)', background: 'var(--mm-surface)', borderRadius: '15px', padding: '16px 10px', color: 'var(--mm-text)' }}>
+                      <span className="mm-icon-badge" style={{ width: '44px', height: '44px', borderRadius: '12px', background: '#E6EFE8', color: 'var(--mm-primary)' }}><span className="ms" style={{ fontSize: '24px' }}>photo_camera</span></span>
+                      <span style={{ fontSize: '14.5px', fontWeight: 700 }}>{lang === 'vi' ? 'Quét đơn thuốc' : 'Scan prescription'}</span>
+                    </button>
+                    <button type="button" onClick={() => setShowAddModal(true)} className="mm-btn" style={{ flex: 1, flexDirection: 'column', gap: '8px', border: '1px solid var(--mm-border-warm)', background: 'var(--mm-surface)', borderRadius: '15px', padding: '16px 10px', color: 'var(--mm-text)' }}>
+                      <span className="mm-icon-badge" style={{ width: '44px', height: '44px', borderRadius: '12px', background: '#E6EFE8', color: 'var(--mm-primary)' }}><span className="ms" style={{ fontSize: '24px' }}>add</span></span>
+                      <span style={{ fontSize: '14.5px', fontWeight: 700 }}>{lang === 'vi' ? 'Thêm thuốc' : 'Add medication'}</span>
+                    </button>
                   </div>
-                ) : logs.length === 0 ? (
-                  <div className="text-center py-8 text-slate-500 text-sm">
-                    <CheckCircle className="w-8 h-8 mx-auto mb-2 text-slate-400" />
-                    Chưa có lịch trình thuốc nào cho hôm nay.
+
+                  {/* Achievement badges */}
+                  {badges.length > 0 && (
+                    <div className="mm-card" style={{ padding: '18px 20px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                        <span className="ms" style={{ fontSize: '20px', color: 'var(--mm-amber)' }}>emoji_events</span>
+                        <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--mm-text)' }}>{t.badges}</div>
+                      </div>
+                      <div style={{ fontSize: '12.5px', color: 'var(--mm-text-muted)', marginBottom: '12px' }}>{t.badgesSub}</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                        {badges.map((b) => {
+                          const meta = BADGE_META[b]
+                          const label = meta ? (lang === 'vi' ? meta.vi : meta.en) : b
+                          return (
+                            <span key={b} className="mm-chip" style={{ background: 'var(--mm-primary-soft)', color: 'var(--mm-primary-dark)', padding: '7px 12px', fontSize: '12.5px', fontWeight: 700 }}>
+                              <span className="ms" style={{ fontSize: '16px' }}>{meta?.icon || 'workspace_premium'}</span>{label}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Mini chat teaser */}
+                  <div className="mm-card" style={{ padding: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: '270px' }}>
+                    <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--mm-border-warm)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span className="mm-icon-badge" style={{ width: '34px', height: '34px', borderRadius: '10px', background: 'var(--mm-primary)', color: '#fff' }}><span className="ms" style={{ fontSize: '19px' }}>neurology</span></span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '15px', fontWeight: 700 }}>{lang === 'vi' ? 'Trợ lý MediMate' : 'MediMate Assistant'}</div>
+                        <div style={{ fontSize: '12px', color: 'var(--mm-primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px' }}><span style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--mm-primary)' }} />{lang === 'vi' ? 'Đang trực tuyến' : 'Online'}</div>
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: '12px', background: '#FCFBF8', overflowY: 'auto', maxHeight: '190px' }}>
+                      {messages.slice(-3).map((m, i) => (
+                        <div key={i} style={{ alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '88%', background: m.role === 'user' ? 'var(--mm-primary)' : '#F0EDE4', color: m.role === 'user' ? '#fff' : '#3A473F', padding: '11px 15px', borderRadius: m.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px', fontSize: '14.5px', lineHeight: 1.5, whiteSpace: 'pre-line', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                          {m.content}
+                        </div>
+                      ))}
+                    </div>
+                    <button type="button" onClick={() => setActiveTab('chat')} style={{ margin: '12px 14px', display: 'flex', alignItems: 'center', gap: '10px', background: '#F4F2EC', border: '1px solid var(--mm-border-warm)', borderRadius: '12px', padding: '10px 14px', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+                      <span style={{ flex: 1, fontSize: '14px', color: 'var(--mm-text-faint)' }}>{lang === 'vi' ? 'Hỏi về thuốc của bạn…' : 'Ask about your meds…'}</span>
+                      <span className="mm-icon-badge" style={{ width: '34px', height: '34px', borderRadius: '10px', background: 'var(--mm-primary)', color: '#fff' }}><span className="ms" style={{ fontSize: '19px' }}>send</span></span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Medication management list (full width) */}
+              <div className="mm-card" style={{ padding: '20px 22px', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                  <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--mm-text)' }}>{t.medList}</div>
+                  <button type="button" onClick={() => setShowAddModal(true)} className="mm-btn mm-btn-outline" style={{ padding: '8px 13px', fontSize: '13px', borderRadius: '999px' }}>
+                    <span className="ms" style={{ fontSize: '18px' }}>add</span>{t.addFast}
+                  </button>
+                </div>
+                {loadingMeds ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ height: '64px', background: '#F0EDE4', borderRadius: '14px' }} className="animate-pulse" />
+                    <div style={{ height: '64px', background: '#F0EDE4', borderRadius: '14px' }} className="animate-pulse" />
+                  </div>
+                ) : medications.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '36px 0', color: 'var(--mm-text-faint)' }}>
+                    <span className="ms" style={{ fontSize: '38px', display: 'block', margin: '0 auto 8px' }}>medication</span>
+                    {t.noMedsRegistered}<br />{t.chatPrompt}
                   </div>
                 ) : (
-                  <div className="space-y-4 max-h-[400px] overflow-y-auto pr-1">
-                    {(() => {
-                      const groupedByTime: Record<string, typeof logs> = {}
-                      logs.forEach(log => {
-                        const timeKey = new Date(log.scheduled_time).toLocaleTimeString('vi-VN', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                        if (!groupedByTime[timeKey]) groupedByTime[timeKey] = []
-                        groupedByTime[timeKey].push(log)
-                      })
-
-                      return Object.entries(groupedByTime).map(([timeSlot, slotLogs]) => {
-                        const hasScheduled = slotLogs.some(l => l.status === 'scheduled')
-
-                        return (
-                          <div key={timeSlot} className={`p-4 border rounded-2xl space-y-3 relative overflow-hidden transition-all ${
-                            isLightMode ? 'bg-slate-50/80 border-slate-200/60' : 'bg-slate-950/30 border-slate-900/60'
-                          }`}>
-                            <div className={`absolute top-0 left-0 w-1 h-full ${isLightMode ? 'bg-teal-500' : 'bg-teal-500/20'}`} />
-                            
-                            <div className="flex items-center justify-between pb-2 border-b border-slate-900/20">
-                              <div className="flex items-center gap-1.5">
-                                <Clock className="w-4 h-4 text-teal-500" />
-                                <span className={`font-black text-base ${isLightMode ? 'text-slate-900' : 'text-slate-200'}`}>{timeSlot}</span>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '14px' }}>
+                    {medications.map((med) => {
+                      const low = med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5
+                      return (
+                        <div key={med.id} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', padding: '14px 16px', border: '1px solid #EDEAE0', borderRadius: '14px', background: '#FBFAF6' }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 }}>
+                            <span className="mm-icon-badge" style={{ width: '40px', height: '40px', borderRadius: '11px', background: '#E6EFE8', color: 'var(--mm-primary)', fontWeight: 800, fontSize: '14px' }}>{med.name.slice(0, 2).toUpperCase()}</span>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: '15.5px', fontWeight: 700, color: 'var(--mm-text)' }}>{med.name}</div>
+                              <div style={{ fontSize: '13px', color: 'var(--mm-text-muted)', marginTop: '1px' }}>{med.dosage} · {med.frequency}</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '7px' }}>
+                                {med.schedule.map((time, idx) => (
+                                  <span key={idx} style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '999px', background: '#EFEDE4', color: 'var(--mm-text-muted)' }}>{time}</span>
+                                ))}
                               </div>
-
-                              {hasScheduled && (
-                                <button
-                                  onClick={() => handleBatchTakeAll(slotLogs.filter(l => l.status === 'scheduled'))}
-                                  className={`px-3 py-1.5 border rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center min-h-[38px] ${
-                                    isLightMode 
-                                      ? 'bg-teal-100 border-teal-200 text-teal-700 hover:bg-teal-200' 
-                                      : 'bg-teal-500/10 border-teal-500/20 text-teal-400 hover:bg-teal-500/25'
-                                  }`}
-                                >
-                                  {lang === 'vi' ? 'Đã uống tất cả ✓' : 'Take all ✓'}
-                                </button>
-                              )}
-                            </div>
-
-                            <div className="space-y-2">
-                              {slotLogs.map((log) => (
-                                <div key={log.id} className={`flex items-start justify-between gap-3 p-3 border rounded-xl transition-all ${
-                                  log.status === 'taken'
-                                    ? (isLightMode ? 'bg-emerald-50/40 border-emerald-100/50 opacity-60' : 'bg-emerald-950/10 border-emerald-900/20 opacity-60')
-                                    : (isLightMode ? 'bg-white border-slate-200' : 'bg-slate-900/60 border-slate-800')
-                                }`}>
-                                  <div className="flex items-start gap-2.5">
-                                    <span className="text-lg mt-0.5">{log.status === 'taken' ? '✅' : '🕒'}</span>
-                                    <div>
-                                      <span className={`text-base md:text-lg font-black transition-colors ${
-                                        log.status === 'taken' 
-                                          ? (isLightMode ? 'text-slate-500' : 'text-slate-400') 
-                                          : (isLightMode ? 'text-slate-900' : 'text-slate-100')
-                                      }`}>
-                                        {log.medication?.name}
-                                      </span>
-                                      <div className={`text-xs mt-0.5 font-bold ${
-                                        log.status === 'taken' ? 'text-slate-400' : (isLightMode ? 'text-slate-500' : 'text-slate-400')
-                                      }`}>
-                                        {log.medication?.dosage} • {log.medication?.dosage_quantity ?? 1} {lang === 'vi' ? 'viên' : 'pill'}
-                                      </div>
-                                    </div>
+                              {med.total_stock !== undefined && med.total_stock !== null && (
+                                <div style={{ marginTop: '9px' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', fontWeight: 700, color: low ? 'var(--mm-coral)' : 'var(--mm-text-muted)' }}>
+                                    <span>{lang === 'vi' ? 'Tồn kho' : 'Stock'}: {med.remaining_stock} / {med.total_stock}</span>
+                                    {low && <span>{lang === 'vi' ? '⚠️ Sắp hết!' : '⚠️ Low!'}</span>}
                                   </div>
-                                  
-                                  <button
-                                    onClick={() => handleToggleLogStatus(log.id, log.status)}
-                                    className={`px-4 py-2 border rounded-xl text-xs font-black transition-all cursor-pointer min-h-[48px] min-w-[80px] flex items-center justify-center ${
-                                      log.status === 'taken'
-                                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
-                                        : log.status === 'missed'
-                                        ? 'bg-rose-500/10 border-rose-500/20 text-rose-400 hover:bg-rose-500/20'
-                                        : (isLightMode ? 'bg-teal-600 hover:bg-teal-700 text-white border-teal-600 shadow-sm' : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800')
-                                    }`}
-                                  >
-                                    {log.status === 'taken' ? t.taken : log.status === 'missed' ? t.skippedBadge : (lang === 'vi' ? 'Uống' : 'Take')}
+                                  <div style={{ width: '100%', maxWidth: '150px', height: '4px', borderRadius: '999px', overflow: 'hidden', background: '#E4E5DE', marginTop: '5px' }}>
+                                    <div style={{ height: '100%', borderRadius: '999px', background: low ? 'var(--mm-coral)' : 'var(--mm-primary)', width: `${Math.max(0, Math.min(100, ((med.remaining_stock ?? 0) / (med.total_stock ?? 1)) * 100))}%` }} />
+                                  </div>
+                                  <button type="button" onClick={() => handleRefillStock(med.id, med.total_stock ?? 30)} style={{ fontSize: '10px', fontWeight: 700, color: 'var(--mm-primary)', background: 'none', border: 'none', cursor: 'pointer', marginTop: '5px', fontFamily: 'inherit' }}>
+                                    🔄 {lang === 'vi' ? 'Nạp thêm thuốc' : 'Refill'}
                                   </button>
                                 </div>
-                              ))}
+                              )}
                             </div>
                           </div>
-                        )
-                      })
-                    })()}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
+                            <button type="button" onClick={() => handleEditMedicationClick(med)} className="mm-btn mm-btn-ghost" style={{ padding: '8px', borderRadius: '10px' }} title={lang === 'vi' ? 'Sửa' : 'Edit'}>
+                              <span className="ms" style={{ fontSize: '20px' }}>edit</span>
+                            </button>
+                            <button type="button" onClick={() => handleDeleteMedication(med.id)} className="mm-btn mm-btn-ghost" style={{ padding: '8px', borderRadius: '10px', color: 'var(--mm-coral)' }} title={lang === 'vi' ? 'Xoá' : 'Delete'}>
+                              <span className="ms" style={{ fontSize: '20px' }}>delete</span>
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
 
-              {/* Caregiver Settings Card */}
-              <div className={`border rounded-2xl p-5 relative overflow-hidden shrink-0 transition-all ${
-                isLightMode ? 'bg-white border-slate-200/80 shadow-sm text-slate-800' : 'bg-slate-900/40 border-slate-900 text-slate-100'
-              }`}>
-                <div className="absolute top-0 right-0 w-20 h-20 bg-rose-500/5 rounded-full blur-xl" />
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Bell className="w-4 h-4 text-rose-500" />
-                    <h3 className="text-sm font-black">{t.guardian}</h3>
+              {/* Caregiver card (full width) */}
+              <div className="mm-card" style={{ padding: '18px 20px', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="ms" style={{ fontSize: '20px', color: 'var(--mm-coral)' }}>notifications_active</span>
+                    <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--mm-text)' }}>{t.guardian}</div>
                   </div>
-                  <div className="flex items-center gap-2.5">
-                    <button
-                      type="button"
-                      onClick={handleTriggerSOSTest}
-                      className="text-[10px] text-rose-500 bg-rose-500/10 border border-rose-500/20 px-2 py-1 rounded-lg font-black hover:bg-rose-500 hover:text-slate-950 cursor-pointer transition-all"
-                    >
-                      🚨 SOS (Demo)
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => setShowCaregiverModal(true)}
-                      className="text-xs text-rose-500 font-bold hover:underline cursor-pointer min-h-[30px]"
-                    >
-                      {t.setup}
-                    </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <button type="button" onClick={handleTriggerSOSTest} className="mm-chip" style={{ background: 'rgba(225,101,90,0.1)', color: 'var(--mm-coral)', padding: '5px 10px', fontSize: '11.5px', cursor: 'pointer', border: '1px solid rgba(225,101,90,0.25)' }}>🚨 SOS (Demo)</button>
+                    <button type="button" onClick={() => setShowCaregiverModal(true)} style={{ fontSize: '12.5px', color: 'var(--mm-primary)', fontWeight: 700, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>{t.setup}</button>
                   </div>
                 </div>
-                <div className="text-xs flex flex-col gap-1.5">
-                  <div className="flex justify-between">
-                    <span className={isLightMode ? 'text-slate-500' : 'text-slate-400'}>{t.guardianName}</span>
-                    <span className={`font-bold ${isLightMode ? 'text-slate-800' : 'text-slate-300'}`}>{caregiverName}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className={isLightMode ? 'text-slate-500' : 'text-slate-400'}>{t.guardianEmail}</span>
-                    <span className={`font-bold ${isLightMode ? 'text-slate-800' : 'text-slate-300'}`}>{caregiverEmail}</span>
-                  </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 24px', fontSize: '13px' }}>
+                  <div style={{ display: 'flex', gap: '8px' }}><span style={{ color: 'var(--mm-text-muted)' }}>{t.guardianName}:</span><span style={{ fontWeight: 700, color: caregiverName ? 'var(--mm-text)' : 'var(--mm-text-faint)' }}>{caregiverName || (lang === 'vi' ? 'Chưa thiết lập' : 'Not set')}</span></div>
+                  <div style={{ display: 'flex', gap: '8px' }}><span style={{ color: 'var(--mm-text-muted)' }}>{t.guardianEmail}:</span><span style={{ fontWeight: 700, color: caregiverEmail ? 'var(--mm-text)' : 'var(--mm-text-faint)' }}>{caregiverEmail || '—'}</span></div>
                 </div>
-
                 {caregiverAlerts.length > 0 ? (
-                  <div className={`mt-4 space-y-2 border-t pt-3 ${isLightMode ? 'border-slate-100' : 'border-slate-900'}`}>
-                    <div className="text-[10px] text-rose-500 font-bold uppercase tracking-wider">
-                      {t.alertHistory}
-                    </div>
-                    <div className="max-h-24 overflow-y-auto space-y-1.5 pr-1">
+                  <div style={{ marginTop: '14px', borderTop: '1px solid var(--mm-border-warm)', paddingTop: '12px' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--mm-coral)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>{t.alertHistory}</div>
+                    <div style={{ maxHeight: '96px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {caregiverAlerts.map((alert, idx) => (
-                        <div key={idx} className={`text-[10px] border p-2 rounded-lg leading-relaxed ${
-                          isLightMode ? 'bg-rose-50 border-rose-100 text-rose-700' : 'bg-rose-950/20 border-rose-900/30 text-rose-300'
-                        }`}>
-                          {alert}
-                        </div>
+                        <div key={idx} style={{ fontSize: '11px', border: '1px solid rgba(225,101,90,0.2)', background: 'rgba(225,101,90,0.06)', color: '#a23c33', padding: '8px', borderRadius: '10px', lineHeight: 1.45 }}>{alert}</div>
                       ))}
                     </div>
                   </div>
                 ) : (
-                  <div className={`mt-4 space-y-2 border-t pt-3 ${isLightMode ? 'border-slate-100' : 'border-slate-900'}`}>
-                    <div className="text-[10px] text-slate-400 font-semibold italic text-center py-2">
-                      {lang === 'vi' 
-                        ? 'Chưa có cảnh báo nào. Đây là bản mô phỏng — bản production sẽ tự động gửi SOS/Email khi trễ lịch uống thuốc.'
-                        : 'No alerts yet. This is a simulation — production would auto-send SOS/Email on missed medication.'}
-                    </div>
+                  <div style={{ marginTop: '14px', borderTop: '1px solid var(--mm-border-warm)', paddingTop: '12px', fontSize: '11.5px', color: 'var(--mm-text-faint)', fontStyle: 'italic' }}>
+                    {lang === 'vi' ? 'Chưa có cảnh báo nào. Đây là bản mô phỏng — bản production sẽ tự động gửi SOS/Email khi trễ lịch uống thuốc.' : 'No alerts yet. This is a simulation — production would auto-send SOS/Email on missed medication.'}
                   </div>
                 )}
               </div>
-
-
-              {/* Medication Management List */}
-              <div className={`border rounded-2xl p-6 flex flex-col shrink-0 transition-all ${
-                isLightMode ? 'bg-white border-slate-200/80 shadow-sm text-slate-800' : 'bg-slate-900/40 border-slate-900 text-slate-100'
-              }`}>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <Activity className="w-5 h-5 text-indigo-500" />
-                    <h2 className="text-lg font-black">{t.medList}</h2>
-                  </div>
-
-                  <button
-                    onClick={() => setShowAddModal(true)}
-                    className={`px-3 py-1.5 border rounded-xl transition-all flex items-center gap-1 text-xs font-bold cursor-pointer min-h-[38px] ${
-                      isLightMode
-                        ? 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'
-                        : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400 hover:bg-indigo-500 hover:text-slate-950'
-                    }`}
-                  >
-                    <Plus className="w-4 h-4" />
-                    {t.addFast}
-                  </button>
-                </div>
-
-                {loadingMeds ? (
-                  <div className="space-y-3 flex-grow">
-                    <div className="h-16 bg-slate-800/40 animate-pulse rounded-xl" />
-                    <div className="h-16 bg-slate-800/40 animate-pulse rounded-xl" />
-                  </div>
-                ) : medications.length === 0 ? (
-                  <div className="text-center py-12 text-slate-500 text-sm flex-grow flex flex-col items-center justify-center">
-                    <HelpCircle className="w-10 h-10 mb-2 text-slate-600" />
-                    {t.noMedsRegistered}
-                    <br />
-                    {t.chatPrompt}
-                  </div>
-                ) : (
-                  <div className="space-y-6 overflow-y-auto max-h-[300px] md:max-h-[400px] pr-1">
-                    {(() => {
-                      const grouped: Record<string, Medication[]> = {}
-                      medications.forEach(med => {
-                        const groupKey = med.prescription_name || 'Thuốc lẻ / Tự thêm'
-                        if (!grouped[groupKey]) grouped[groupKey] = []
-                        grouped[groupKey].push(med)
-                      })
-                      return Object.entries(grouped).map(([groupName, groupMeds]) => (
-                        <div key={groupName} className="space-y-2.5">
-                          {/* Group Header */}
-                          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border sticky top-0 backdrop-blur z-10 shrink-0 transition-all ${
-                            isLightMode ? 'bg-slate-100/90 border-slate-200 text-slate-700' : 'bg-slate-900/30 border-slate-900/60 bg-slate-950/80'
-                          }`}>
-                            <FileText className="w-4 h-4 text-indigo-500" />
-                            <span className="text-xs font-bold uppercase tracking-wider">
-                              {groupName}
-                            </span>
-                            <span className="text-[10px] px-1.5 py-0.5 bg-slate-900/50 text-slate-500 rounded-md font-mono font-bold">
-                              {groupMeds.length} {lang === 'vi' ? 'thuốc' : 'meds'}
-                            </span>
-                          </div>
-
-                          {/* Group Medications */}
-                          <div className="space-y-3">
-                            {groupMeds.map((med) => (
-                              <div
-                                key={med.id}
-                                className={`flex items-center justify-between p-4 border rounded-xl transition-all group ${
-                                  isLightMode ? 'bg-slate-50/50 border-slate-200/80 hover:bg-slate-50' : 'bg-slate-950/40 border-slate-900 hover:border-slate-800'
-                                }`}
-                              >
-                                <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 bg-indigo-500/10 border border-indigo-500/20 rounded-lg flex items-center justify-center">
-                                    <span className="font-bold text-indigo-600 text-sm">
-                                      {med.name.slice(0, 2).toUpperCase()}
-                                    </span>
-                                  </div>
-                                  <div>
-                                    <div className={`font-black text-base ${isLightMode ? 'text-slate-900' : 'text-slate-200'}`}>{med.name}</div>
-                                    <div className={`text-xs mt-0.5 flex flex-wrap gap-x-2 font-bold ${isLightMode ? 'text-slate-600' : 'text-slate-400'}`}>
-                                      <span>{med.dosage} • {med.frequency}</span>
-                                      {med.dosage_quantity && med.dosage_quantity >= 0.1 && (
-                                        <span className="text-teal-600">
-                                          ({lang === 'vi' ? 'Mỗi lần' : 'Each'}: {med.dosage_quantity} {t.capsules})
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="flex flex-wrap gap-1.5 mt-1.5">
-                                      {med.schedule.map((time, idx) => (
-                                        <span
-                                          key={idx}
-                                          className={`text-[9px] font-bold px-1.5 py-0.5 border rounded-md ${
-                                            isLightMode ? 'bg-slate-100 border-slate-200 text-slate-600' : 'bg-slate-900 border-slate-800 text-slate-400'
-                                          }`}
-                                        >
-                                          {time}
-                                        </span>
-                                      ))}
-                                    </div>
-
-                                    {/* Stock Indicator */}
-                                    {med.total_stock !== undefined && med.total_stock !== null && (
-                                      <div className="mt-2.5 space-y-1">
-                                        <div className={`flex items-center justify-between text-[10px] font-bold ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                                          <span>{lang === 'vi' ? 'Tồn kho' : 'Stock'}: <strong className={med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 ? "text-rose-500 font-extrabold animate-pulse" : (isLightMode ? "text-slate-700" : "text-slate-300")}>
-                                            {med.remaining_stock} / {med.total_stock}
-                                          </strong></span>
-                                          {med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 && (
-                                            <span className="text-rose-500 font-extrabold animate-pulse">{lang === 'vi' ? '⚠️ Sắp hết!' : '⚠️ Low stock!'}</span>
-                                          )}
-                                        </div>
-
-                                        {/* Prescription projection calculation */}
-                                        {(() => {
-                                          const timesPerDay = med.schedule.length || 1
-                                          const doseQty = med.dosage_quantity || 1
-                                          const dosePerDay = timesPerDay * doseQty
-                                          if (med.total_stock) {
-                                            const totalDays = Math.ceil(med.total_stock / dosePerDay)
-                                            const remainingDays = med.remaining_stock !== undefined && med.remaining_stock !== null 
-                                              ? Math.ceil(med.remaining_stock / dosePerDay)
-                                              : totalDays
-
-                                            const startDate = new Date(med.created_at)
-                                            const endDate = new Date(startDate.getTime() + totalDays * 24 * 60 * 60 * 1000)
-                                            const endDateStr = endDate.toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US', { day: '2-digit', month: '2-digit', year: 'numeric' })
-
-                                            return (
-                                              <div className={`text-[10px] font-bold mt-1 leading-relaxed ${isLightMode ? 'text-indigo-600' : 'text-indigo-300'}`}>
-                                                ⏱️ {t.course}: <strong className={isLightMode ? 'text-slate-700' : 'text-slate-200'}>{totalDays} {t.days}</strong> ({t.remaining}: <strong className={isLightMode ? 'text-slate-700' : 'text-slate-200'}>{remainingDays} {t.days}</strong>, {t.estimatedEnd} {endDateStr})
-                                              </div>
-                                            )
-                                          }
-                                          return null
-                                        })()}
-
-                                        <div className={`w-32 h-1 rounded-full overflow-hidden flex mt-1 ${isLightMode ? 'bg-slate-200' : 'bg-slate-900'}`}>
-                                          <div 
-                                            className={`h-full rounded-full transition-all ${
-                                              med.remaining_stock !== null && med.remaining_stock !== undefined && med.remaining_stock <= 5 ? "bg-rose-500 animate-pulse" : "bg-teal-500"
-                                            }`}
-                                            style={{ width: `${((med.remaining_stock ?? 0) / (med.total_stock ?? 1)) * 100}%` }}
-                                          />
-                                        </div>
-                                        <button 
-                                          type="button"
-                                          onClick={() => handleRefillStock(med.id, med.total_stock ?? 30)}
-                                          className={`text-[9px] font-bold hover:underline flex items-center gap-0.5 mt-1 cursor-pointer min-h-[30px] ${
-                                            isLightMode ? 'text-indigo-600 hover:text-indigo-700' : 'text-indigo-400 hover:text-indigo-300'
-                                          }`}
-                                        >
-                                          🔄 {lang === 'vi' ? 'Nạp thêm thuốc' : 'Refill Medication'}
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <button
-                                    onClick={() => handleEditMedicationClick(med)}
-                                    className={`p-2.5 rounded-lg transition-colors cursor-pointer min-h-[48px] min-w-[48px] flex items-center justify-center ${
-                                      isLightMode ? 'text-slate-500 hover:text-indigo-600 hover:bg-slate-100' : 'text-slate-400 hover:text-indigo-400 hover:bg-slate-900'
-                                    }`}
-                                    title={lang === 'vi' ? 'Sửa lịch thuốc' : 'Edit Medication'}
-                                  >
-                                    <Pencil className="w-5 h-5" />
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteMedication(med.id)}
-                                    className={`p-2.5 rounded-lg transition-colors cursor-pointer min-h-[48px] min-w-[48px] flex items-center justify-center ${
-                                      isLightMode ? 'text-slate-500 hover:text-rose-600 hover:bg-slate-100' : 'text-slate-400 hover:text-rose-400 hover:bg-slate-900'
-                                    }`}
-                                    title={lang === 'vi' ? 'Xoá lịch thuốc' : 'Delete Medication'}
-                                  >
-                                    <Trash2 className="w-5 h-5" />
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ))
-                    })()}
-                  </div>
-                )}
-              </div>
+              </>)}
 
             </section>
 
-            {/* Right Panel: Chat Interface (50%) */}
-            <section className={`flex-1 md:max-w-[50%] flex flex-col overflow-hidden relative pb-20 md:pb-0 transition-colors duration-300 ${
-              isLightMode ? 'bg-slate-50' : 'bg-slate-950/40'
-            } ${activeTab === 'chat' ? 'flex' : (activeTab === 'admin' ? 'hidden' : 'hidden md:flex')}`}>
-              
-              {/* Chat Title / Agent Indicator */}
-              <div className={`px-6 py-4 border-b flex items-center justify-between transition-colors ${
-                isLightMode ? 'border-slate-200 bg-white' : 'border-slate-900 bg-slate-950/20'
-              }`}>
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-teal-500" />
-                  <span className={`font-black text-sm ${isLightMode ? 'text-slate-900' : 'text-slate-100'}`}>
-                    {lang === 'vi' ? 'Hội thoại với Trợ lý AI' : 'Chat with AI Assistant'}
-                  </span>
-                </div>
-                <div className={`flex items-center gap-1.5 text-xs font-semibold ${isLightMode ? 'text-slate-600' : 'text-slate-400'}`}>
-                  <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-                  Gemini 3.1 Flash-Lite
+            {/* Right Panel: Chat Interface */}
+            <section className={`flex-1 min-h-0 flex-row overflow-hidden relative pb-20 md:pb-0 w-full ${activeTab === 'chat' ? 'flex' : 'hidden'}`} style={{ background: 'var(--mm-bg)' }}>
+              {/* Suggested-topics rail (desktop) */}
+              <aside className="hidden md:flex" style={{ width: '264px', flexShrink: 0, flexDirection: 'column', gap: '6px', background: 'var(--mm-surface-2)', borderRight: '1px solid var(--mm-border-warm)', padding: '22px 18px', overflowY: 'auto' }}>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--mm-text-faint)', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0 6px 6px' }}>{lang === 'vi' ? 'Chủ đề gợi ý' : 'Suggested topics'}</div>
+                {[
+                  { icon: 'medication_liquid', vi: 'Thuốc của tôi', en: 'My medications', q: lang === 'vi' ? 'Cho tôi xem danh sách thuốc tôi đang dùng' : 'Show my current medications' },
+                  { icon: 'policy', vi: 'Kiểm tra tương tác thuốc', en: 'Check interactions', q: lang === 'vi' ? 'Kiểm tra tương tác giữa các thuốc tôi đang dùng' : 'Check interactions between my medications' },
+                  { icon: 'alarm', vi: 'Đổi giờ nhắc uống', en: 'Change reminder time', q: lang === 'vi' ? 'Tôi muốn đổi giờ nhắc uống thuốc' : 'I want to change my reminder times' },
+                  { icon: 'help', vi: 'Công dụng & tác dụng phụ', en: 'Uses & side effects', q: lang === 'vi' ? 'Công dụng và tác dụng phụ của thuốc tôi đang dùng là gì?' : 'What are the uses and side effects of my medications?' },
+                ].map((topic) => (
+                  <button key={topic.icon} type="button" onClick={() => setInputMessage(topic.q)} className="mm-chat-topic" style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '13px 14px', borderRadius: '13px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', color: 'var(--mm-text)', width: '100%' }}>
+                    <span className="mm-icon-badge" style={{ width: '34px', height: '34px', borderRadius: '10px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', flexShrink: 0 }}><span className="ms" style={{ fontSize: '19px' }}>{topic.icon}</span></span>
+                    <span style={{ fontSize: '14px', fontWeight: 600 }}>{lang === 'vi' ? topic.vi : topic.en}</span>
+                  </button>
+                ))}
+              </aside>
+              {/* Chat column */}
+              <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative', maxWidth: '900px', margin: '0 auto', width: '100%' }}>
+              {/* Chat header */}
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--mm-border-warm)', background: 'var(--mm-surface)', display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+                <span className="mm-icon-badge" style={{ width: '44px', height: '44px', borderRadius: '13px', background: 'var(--mm-primary)', color: '#fff' }}><span className="ms" style={{ fontSize: '25px' }}>neurology</span></span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '15.5px', fontWeight: 700, color: 'var(--mm-text)' }}>{lang === 'vi' ? 'Trợ lý MediMate' : 'MediMate Assistant'}</div>
+                  <div style={{ fontSize: '12.5px', color: 'var(--mm-primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--mm-primary)' }} />{lang === 'vi' ? 'Trực tuyến · trả lời bằng tiếng Việt' : 'Online · replies in Vietnamese'}
+                  </div>
                 </div>
               </div>
-
-              {/* Chat Log Messages */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {/* Messages */}
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px', background: '#FCFBF8' }}>
                 {messages.map((msg, index) => (
-                  <div
-                    key={index}
-                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-[85%] rounded-2xl px-4 py-3 text-base font-bold leading-relaxed shadow-md relative group/msg transition-all ${
-                        msg.role === 'user'
-                          ? 'bg-indigo-600 text-white'
-                          : msg.role === 'system'
-                          ? (isLightMode ? 'bg-rose-50 border border-rose-200 text-rose-700 font-mono text-xs' : 'bg-rose-950/30 border border-rose-900/30 text-rose-300 font-mono text-xs')
-                          : (isLightMode ? 'bg-white border border-slate-200 text-slate-900' : 'bg-slate-900 border border-slate-800 text-slate-200')
-                      }`}
-                    >
-                      <p className="whitespace-pre-line pr-6">
-                        {msg.content}
-                      </p>
-
-                    </div>
+                  <div key={index} style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                    {msg.role !== 'user' && (
+                      <span className="mm-icon-badge" style={{ width: '32px', height: '32px', borderRadius: '10px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', flexShrink: 0 }}><span className="ms" style={{ fontSize: '18px' }}>neurology</span></span>
+                    )}
+                    <div style={
+                      msg.role === 'user'
+                        ? { maxWidth: '80%', background: 'var(--mm-primary)', color: '#fff', padding: '13px 16px', borderRadius: '16px 16px 5px 16px', fontSize: '15.5px', lineHeight: 1.55, whiteSpace: 'pre-line', wordBreak: 'break-word', overflowWrap: 'anywhere' }
+                        : msg.role === 'system'
+                        ? { maxWidth: '85%', background: '#FDF3E7', border: '1px solid #F2D9B8', color: '#7A6A52', padding: '12px 15px', borderRadius: '16px 16px 16px 5px', fontSize: '13px', fontFamily: 'ui-monospace, monospace', lineHeight: 1.5, whiteSpace: 'pre-line', wordBreak: 'break-word', overflowWrap: 'anywhere' }
+                        : { maxWidth: '80%', background: '#F0EDE4', color: '#3A473F', padding: '13px 16px', borderRadius: '16px 16px 16px 5px', fontSize: '15.5px', lineHeight: 1.55, whiteSpace: 'pre-line', wordBreak: 'break-word', overflowWrap: 'anywhere' }
+                    }>{msg.content}</div>
                   </div>
                 ))}
-
                 {loadingChat && (
-                  <div className="flex justify-start">
-                    <div className={`border rounded-2xl px-4 py-3 flex items-center gap-2 ${
-                      isLightMode ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800'
-                    }`}>
-                      <div className="w-2 h-2 bg-teal-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <div className="w-2 h-2 bg-teal-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <div className="w-2 h-2 bg-teal-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                    <div style={{ background: '#F0EDE4', borderRadius: '14px', padding: '12px 16px', display: 'flex', gap: '5px' }}>
+                      <span className="mm-dot" style={{ animationDelay: '0ms' }} />
+                      <span className="mm-dot" style={{ animationDelay: '150ms' }} />
+                      <span className="mm-dot" style={{ animationDelay: '300ms' }} />
                     </div>
                   </div>
                 )}
-                
                 <div ref={chatEndRef} />
               </div>
-
-              {/* Interaction Warning Panel Overlay */}
+              {/* Interaction warning overlay */}
               {warningInfo && (
-                <div className={`absolute inset-x-0 bottom-[120px] border-t p-4 shadow-xl z-20 flex flex-col gap-3 transition-colors ${
-                  isLightMode ? 'bg-white border-rose-200 text-slate-800' : 'bg-slate-900 border-rose-900/50 text-slate-100'
-                }`}>
-                  <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 bg-rose-500/10 border border-rose-500/20 text-rose-500 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
-                      <AlertTriangle className="w-5 h-5" />
-                    </div>
+                <div style={{ position: 'absolute', left: 0, right: 0, bottom: '92px', background: '#FDF3E7', borderTop: '1px solid #F2D9B8', padding: '16px 20px', boxShadow: '0 -12px 30px -18px rgba(34,48,42,0.4)', zIndex: 20, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                    <span className="mm-icon-badge" style={{ width: '34px', height: '34px', borderRadius: '10px', background: 'rgba(176,106,44,0.12)', color: 'var(--mm-orange)', flexShrink: 0 }}><span className="ms" style={{ fontSize: '20px' }}>warning</span></span>
                     <div>
-                      <h4 className="font-extrabold text-sm text-rose-500">
-                        Cảnh Báo Tương Tác Y Khoa Nghiêm Trọng!
-                      </h4>
-                      <p className={`text-xs mt-1 font-bold ${isLightMode ? 'text-slate-600' : 'text-slate-300'}`}>
-                        {warningInfo.explanation}
-                      </p>
+                      <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--mm-orange)' }}>{lang === 'vi' ? 'Cảnh báo tương tác thuốc' : 'Drug interaction warning'}</div>
+                      <div style={{ fontSize: '13px', marginTop: '4px', color: '#7A6A52', fontWeight: 500, lineHeight: 1.45 }}>{warningInfo.explanation}</div>
+                      <div style={{ fontSize: '12.5px', marginTop: '7px', color: '#A08A6A', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span className="ms" style={{ fontSize: '15px' }}>database</span>{lang === 'vi' ? 'Nguồn: nhãn thuốc chính thức OpenFDA' : 'Source: official OpenFDA drug labels'}
+                      </div>
                     </div>
                   </div>
-                  
-                  <div className="flex justify-end gap-2 text-xs">
-                    <button
-                      onClick={() => setWarningInfo(null)}
-                      className={`px-3 py-2 border rounded-lg transition-colors cursor-pointer font-bold ${
-                        isLightMode ? 'bg-slate-100 border-slate-200 hover:bg-slate-200 text-slate-700' : 'bg-slate-950 border-slate-800 hover:bg-slate-900 text-slate-400'
-                      }`}
-                    >
-                      Huỷ bỏ & Không thêm
-                    </button>
-                    <button
-                      onClick={handleBypassWarningAndAdd}
-                      className="px-3 py-2 bg-rose-500/20 border border-rose-500/30 hover:bg-rose-50 hover:text-white text-rose-600 rounded-lg transition-all font-bold cursor-pointer"
-                    >
-                      Bỏ qua & Tiếp tục thêm
-                    </button>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                    <button type="button" onClick={() => setWarningInfo(null)} className="mm-btn mm-btn-outline" style={{ padding: '9px 14px', fontSize: '13px' }}>{lang === 'vi' ? 'Huỷ bỏ' : 'Cancel'}</button>
+                    <button type="button" onClick={handleBypassWarningAndAdd} className="mm-btn" style={{ padding: '9px 14px', fontSize: '13px', background: 'rgba(176,106,44,0.15)', color: 'var(--mm-orange)', border: '1px solid rgba(176,106,44,0.35)' }}>{lang === 'vi' ? 'Vẫn thêm' : 'Add anyway'}</button>
                   </div>
                 </div>
               )}
-
-              {/* Image Preview Thumbnail */}
+              {/* Image preview */}
               {selectedImage && (
-                <div className={`px-4 py-2 border-t flex items-center justify-between transition-colors ${
-                  isLightMode ? 'bg-slate-100/80 border-slate-200' : 'bg-slate-900/20 border-slate-900'
-                }`}>
-                  <div className="flex items-center gap-2">
-                    <img 
-                      src={selectedImage.data} 
-                      alt="Đơn thuốc" 
-                      className={`w-10 h-10 object-cover rounded-lg border ${isLightMode ? 'border-slate-200' : 'border-slate-800'}`}
-                    />
-                    <span className={`text-xs ${isLightMode ? 'text-slate-600' : 'text-slate-400'}`}>Đã chọn ảnh đơn thuốc</span>
+                <div style={{ padding: '8px 16px', borderTop: '1px solid var(--mm-border-warm)', background: 'var(--mm-surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <img src={selectedImage.data} alt="Đơn thuốc" style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '10px', border: '1px solid var(--mm-border)' }} />
+                    <span style={{ fontSize: '13px', color: 'var(--mm-text-muted)' }}>{lang === 'vi' ? 'Đã chọn ảnh đơn thuốc' : 'Prescription image selected'}</span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedImage(null)}
-                    className={`p-1.5 rounded-md cursor-pointer ${
-                      isLightMode ? 'bg-slate-200 hover:bg-slate-300 text-slate-600' : 'bg-slate-800 hover:bg-slate-700 text-slate-400'
-                    }`}
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                  <button type="button" onClick={() => setSelectedImage(null)} className="mm-btn mm-btn-ghost" style={{ padding: '6px', borderRadius: '8px' }}><span className="ms" style={{ fontSize: '18px' }}>close</span></button>
                 </div>
               )}
-
-
-
-              {/* Chat Input Box */}
-              <form onSubmit={handleSendMessage} className={`p-4 border-t flex gap-2 items-center transition-colors shrink-0 ${
-                isLightMode ? 'border-slate-200 bg-white' : 'border-slate-900 bg-slate-950/40'
-              }`}>
-                <input
-                  type="file"
-                  ref={imageInputRef}
-                  onChange={handleImageChange}
-                  accept="image/*"
-                  className="hidden"
-                />
-
-                <button
-                  type="button"
-                  onClick={() => imageInputRef.current?.click()}
-                  className={`rounded-full border transition-all flex items-center justify-center cursor-pointer min-h-[52px] min-w-[52px] shadow-sm ${
-                    selectedImage 
-                      ? 'bg-indigo-500 border-indigo-400 text-white' 
-                      : (isLightMode ? 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200' : 'bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-400')
-                  }`}
-                  title="Tải ảnh đơn thuốc/vỏ hộp"
-                >
-                  <Camera className="w-5 h-5" />
+              {/* Quick-reply chips */}
+              {!loadingChat && (
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', padding: '10px 16px 0', flexShrink: 0 }}>
+                  {[
+                    { icon: 'medication', vi: 'Dùng thuốc thay thế?', en: 'Any alternative meds?', q: lang === 'vi' ? 'Có thuốc nào thay thế an toàn hơn không?' : 'Is there a safer alternative medication?' },
+                    { icon: 'call', vi: 'Khi nào cần gặp bác sĩ?', en: 'When to see a doctor?', q: lang === 'vi' ? 'Khi nào tôi nên liên hệ bác sĩ?' : 'When should I contact my doctor?' },
+                  ].map((chip) => (
+                    <button key={chip.icon} type="button" onClick={() => setInputMessage(chip.q)} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '9px 15px', borderRadius: '999px', border: 'none', background: '#F0EDE4', color: 'var(--mm-primary-dark)', fontSize: '14px', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}>
+                      <span className="ms" style={{ fontSize: '17px' }}>{chip.icon}</span>{lang === 'vi' ? chip.vi : chip.en}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {/* Input */}
+              <form onSubmit={handleSendMessage} style={{ padding: '14px 16px', borderTop: '1px solid var(--mm-border-warm)', background: 'var(--mm-surface)', display: 'flex', gap: '10px', alignItems: 'center', flexShrink: 0 }}>
+                <input type="file" ref={imageInputRef} onChange={handleImageChange} accept="image/*" style={{ display: 'none' }} />
+                <button type="button" onClick={() => imageInputRef.current?.click()} className="mm-icon-badge" style={{ width: '46px', height: '46px', borderRadius: '12px', background: selectedImage ? 'var(--mm-primary)' : '#EFEDE4', color: selectedImage ? '#fff' : 'var(--mm-text-muted)', cursor: 'pointer', flexShrink: 0 }} title={lang === 'vi' ? 'Tải ảnh đơn thuốc' : 'Upload prescription'}>
+                  <span className="ms" style={{ fontSize: '22px' }}>photo_camera</span>
                 </button>
-
-                <button
-                  type="button"
-                  onClick={startListening}
-                  className={`rounded-full border transition-all flex items-center justify-center cursor-pointer min-h-[52px] min-w-[52px] shadow-md hover:scale-105 active:scale-95 ${
-                    isListening 
-                      ? 'bg-rose-500 border-rose-400 text-white animate-pulse' 
-                      : (isLightMode ? 'bg-rose-100 border-rose-200 text-rose-700 hover:bg-rose-200' : 'bg-rose-950/20 border-rose-900/40 text-rose-400 hover:bg-rose-900/30')
-                  }`}
-                  title={lang === 'vi' ? 'Nói để nhập lịch thuốc' : 'Speak to input schedule'}
-                >
-                  <Mic className={`w-6 h-6 ${isListening ? 'animate-bounce' : ''}`} />
+                <button type="button" onClick={startListening} className="mm-icon-badge" style={{ width: '46px', height: '46px', borderRadius: '12px', background: isListening ? 'var(--mm-coral)' : '#EFEDE4', color: isListening ? '#fff' : 'var(--mm-text-muted)', cursor: 'pointer', flexShrink: 0 }} title={lang === 'vi' ? 'Nói để nhập' : 'Speak'}>
+                  <span className="ms" style={{ fontSize: '22px' }}>mic</span>
                 </button>
-
-                <input
-                  type="text"
-                  value={inputMessage}
-                  onChange={(e) => setInputMessage(e.target.value)}
-                  placeholder={isListening ? (lang === 'vi' ? "Đang nghe..." : "Listening...") : (lang === 'vi' ? "Nhập tin nhắn..." : "Type a message...")}
-                  className={`flex-grow border rounded-xl px-4 py-3 text-base focus:outline-none transition-colors min-h-[48px] ${
-                    isLightMode 
-                      ? 'bg-white border-slate-200 text-slate-900 focus:border-teal-500 shadow-sm' 
-                      : 'bg-slate-900/50 border-slate-900 focus:border-teal-500 text-slate-100'
-                  }`}
-                  disabled={loadingChat}
-                />
-                
-                <button
-                  type="submit"
-                  disabled={loadingChat || (!inputMessage.trim() && !selectedImage)}
-                  className={`rounded-full transition-all shadow-md flex items-center justify-center cursor-pointer min-h-[52px] min-w-[52px] ${
-                    isLightMode 
-                      ? 'bg-teal-500 hover:bg-teal-600 text-white shadow-teal-500/10' 
-                      : 'bg-gradient-to-r from-teal-400 to-teal-500 hover:from-teal-500 hover:to-teal-600 text-slate-950 shadow-teal-500/5'
-                  } disabled:bg-slate-200 disabled:text-slate-400`}
-                >
-                  <Send className="w-5 h-5" />
+                <input type="text" value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} placeholder={isListening ? (lang === 'vi' ? 'Đang nghe...' : 'Listening...') : (lang === 'vi' ? 'Hỏi về thuốc của bạn…' : 'Ask about your meds…')} disabled={loadingChat} style={{ flex: 1, minWidth: 0, background: '#F4F2EC', border: '1px solid var(--mm-border-warm)', borderRadius: '12px', padding: '13px 15px', fontSize: '14.5px', fontFamily: 'inherit', color: 'var(--mm-text)', outline: 'none' }} />
+                <button type="submit" disabled={loadingChat || (!inputMessage.trim() && !selectedImage)} className="mm-icon-badge" style={{ width: '46px', height: '46px', borderRadius: '12px', background: 'var(--mm-primary)', color: '#fff', cursor: 'pointer', flexShrink: 0, border: 'none', opacity: (loadingChat || (!inputMessage.trim() && !selectedImage)) ? 0.5 : 1 }}>
+                  <span className="ms" style={{ fontSize: '22px' }}>send</span>
                 </button>
               </form>
-
+              </div>
             </section>
 
             {/* Admin Portal (Full Width) */}
             {activeTab === 'admin' && isAdmin && (
-              <section className="flex-1 flex flex-col overflow-y-auto p-6 space-y-6 pb-24 md:pb-6 bg-slate-950/20">
-                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-                  <div>
-                    <h2 className="text-2xl font-black text-slate-100 flex items-center gap-2">
-                      <ShieldAlert className="w-6 h-6 text-teal-400" />
-                      {lang === 'vi' ? 'Quản trị Hệ thống' : 'System Administration'}
-                    </h2>
-                    <p className="text-xs text-slate-400 mt-1">
-                      {lang === 'vi' ? 'Xem thống kê toàn hệ thống, giám sát tuân thủ và hỗ trợ người dùng.' : 'View system metrics, monitor patient adherence, and support users.'}
-                    </p>
+              <section className="flex-1 min-h-0 flex flex-col overflow-y-auto p-6 md:p-8 pb-24 md:pb-8" style={{ background: 'var(--mm-bg)' }}>
+                {/* Header row */}
+                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4" style={{ marginBottom: '22px' }}>
+                  <div className="flex items-center" style={{ gap: '13px' }}>
+                    <span className="mm-icon-badge" style={{ width: '46px', height: '46px', borderRadius: '13px', background: 'var(--mm-primary-dark)', color: '#fff', flexShrink: 0 }}>
+                      <span className="ms" style={{ fontSize: '24px' }}>admin_panel_settings</span>
+                    </span>
+                    <div>
+                      <h2 style={{ fontSize: '24px', fontWeight: 800, color: 'var(--mm-text)', letterSpacing: '-0.01em', lineHeight: 1.1 }}>
+                        {lang === 'vi' ? 'Tổng quan hệ thống' : 'System Administration'}
+                      </h2>
+                      <p style={{ fontSize: '14px', color: 'var(--mm-text-muted)', marginTop: '4px' }}>
+                        {lang === 'vi' ? 'Xem thống kê toàn hệ thống, giám sát tuân thủ và hỗ trợ người dùng.' : 'View system metrics, monitor patient adherence, and support users.'}
+                      </p>
+                    </div>
                   </div>
-                  <button
-                    onClick={() => fetchAdminData()}
-                    disabled={loadingAdmin}
-                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-teal-500/30 text-teal-400 rounded-xl text-xs font-semibold cursor-pointer transition-all flex items-center gap-1.5"
-                  >
-                    <RotateCcw className={`w-3.5 h-3.5 ${loadingAdmin ? 'animate-spin' : ''}`} />
-                    {lang === 'vi' ? 'Làm mới dữ liệu' : 'Refresh Data'}
-                  </button>
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => setShowAddUserModal(true)}
+                      className="mm-btn mm-btn-outline"
+                      style={{ fontSize: '14px', fontWeight: 700, gap: '8px' }}
+                    >
+                      <span className="ms" style={{ fontSize: '19px' }}>person_add</span>
+                      {lang === 'vi' ? 'Thêm người dùng' : 'Add user'}
+                    </button>
+                    <button
+                      onClick={handleExportReport}
+                      disabled={!adminData}
+                      className="mm-btn mm-btn-outline"
+                      style={{ fontSize: '14px', fontWeight: 700, gap: '8px', opacity: !adminData ? 0.6 : 1, cursor: !adminData ? 'default' : 'pointer' }}
+                    >
+                      <span className="ms" style={{ fontSize: '19px' }}>download</span>
+                      {lang === 'vi' ? 'Xuất báo cáo' : 'Export'}
+                    </button>
+                    <button
+                      onClick={() => fetchAdminData()}
+                      disabled={loadingAdmin}
+                      className="mm-btn mm-btn-primary"
+                      style={{ fontSize: '14px', fontWeight: 700, gap: '8px', opacity: loadingAdmin ? 0.6 : 1, cursor: loadingAdmin ? 'default' : 'pointer' }}
+                    >
+                      <span className="ms" style={{ fontSize: '19px', animation: loadingAdmin ? 'spin 1s linear infinite' : 'none' }}>refresh</span>
+                      {lang === 'vi' ? 'Làm mới dữ liệu' : 'Refresh Data'}
+                    </button>
+                  </div>
                 </div>
 
+                {/* Config notice when service-role key is missing (no fabricated data shown) */}
+                {adminData?.serviceKeyMissing && (
+                  <div style={{ background: '#FDF3E7', border: '1px solid #F2D9B8', borderRadius: '14px', padding: '14px 16px', marginBottom: '20px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                    <span className="ms" style={{ fontSize: '20px', color: '#B06A2C', flexShrink: 0 }}>key_off</span>
+                    <div style={{ fontSize: '13.5px', color: '#7A6A52', lineHeight: 1.5 }}>
+                      {lang === 'vi'
+                        ? <>Chưa cấu hình <b>SUPABASE_SERVICE_ROLE_KEY</b> nên không thể đọc dữ liệu người dùng thật. Thêm key (từ <code>supabase status</code>) vào <b>.env</b> rồi khởi động lại để hiển thị dữ liệu.</>
+                        : <>No <b>SUPABASE_SERVICE_ROLE_KEY</b> configured, so real user data can’t be read. Add it to <b>.env</b> and restart to see live data.</>}
+                    </div>
+                  </div>
+                )}
+
                 {/* System Stats Overview */}
-                {adminData && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden">
-                      <div className="w-10 h-10 bg-teal-500/10 rounded-xl flex items-center justify-center text-teal-400">
-                        <Users className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-                          {lang === 'vi' ? 'Người dùng' : 'Active Users'}
-                        </div>
-                        <div className="text-xl font-black text-teal-300">
-                          {adminData.stats.totalUsers}
-                        </div>
+                {adminData && !adminData.serviceKeyMissing && (
+                  <div className="grid grid-cols-2 md:grid-cols-4" style={{ gap: '16px', marginBottom: '22px' }}>
+                    <div className="mm-card" style={{ padding: '20px 22px' }}>
+                      <span className="mm-icon-badge" style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', marginBottom: '14px' }}>
+                        <span className="ms" style={{ fontSize: '24px' }}>group</span>
+                      </span>
+                      <div style={{ fontSize: '30px', fontWeight: 800, lineHeight: 1, color: 'var(--mm-text)' }}>{adminData.stats.totalUsers}</div>
+                      <div style={{ fontSize: '14px', color: 'var(--mm-text-muted)', marginTop: '6px' }}>
+                        {lang === 'vi' ? 'Người dùng đang hoạt động' : 'Active Users'}
                       </div>
                     </div>
-                    <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden">
-                      <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400">
-                        <Activity className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-                          {lang === 'vi' ? 'Đơn thuốc' : 'Medications'}
-                        </div>
-                        <div className="text-xl font-black text-indigo-300">
-                          {adminData.stats.totalMeds}
-                        </div>
+                    <div className="mm-card" style={{ padding: '20px 22px' }}>
+                      <span className="mm-icon-badge" style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', marginBottom: '14px' }}>
+                        <span className="ms" style={{ fontSize: '24px' }}>medication</span>
+                      </span>
+                      <div style={{ fontSize: '30px', fontWeight: 800, lineHeight: 1, color: 'var(--mm-text)' }}>{adminData.stats.totalMeds}</div>
+                      <div style={{ fontSize: '14px', color: 'var(--mm-text-muted)', marginTop: '6px' }}>
+                        {lang === 'vi' ? 'Lịch thuốc đang theo dõi' : 'Medications'}
                       </div>
                     </div>
-                    <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden">
-                      <div className="w-10 h-10 bg-orange-500/10 rounded-xl flex items-center justify-center text-orange-400">
-                        <CheckCircle className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-                          {lang === 'vi' ? 'Lượt uống hôm nay' : 'Logs Today'}
-                        </div>
-                        <div className="text-xl font-black text-orange-300">
-                          {adminData.stats.totalLogs}
-                        </div>
+                    <div className="mm-card" style={{ padding: '20px 22px' }}>
+                      <span className="mm-icon-badge" style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', marginBottom: '14px' }}>
+                        <span className="ms" style={{ fontSize: '24px' }}>trending_up</span>
+                      </span>
+                      <div style={{ fontSize: '30px', fontWeight: 800, lineHeight: 1, color: 'var(--mm-primary)' }}>{adminData.stats.complianceRate}%</div>
+                      <div style={{ fontSize: '14px', color: 'var(--mm-text-muted)', marginTop: '6px' }}>
+                        {lang === 'vi' ? 'Tuân thủ trung bình toàn hệ' : 'Adherence Rate'}
                       </div>
                     </div>
-                    <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 flex items-center gap-3 relative overflow-hidden">
-                      <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">
-                        <Award className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-                          {lang === 'vi' ? 'Tỷ lệ tuân thủ' : 'Adherence Rate'}
-                        </div>
-                        <div className="text-xl font-black text-emerald-300">
-                          {adminData.stats.complianceRate}%
-                        </div>
+                    <div className="mm-card" style={{ padding: '20px 22px' }}>
+                      <span className="mm-icon-badge" style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', marginBottom: '14px' }}>
+                        <span className="ms" style={{ fontSize: '24px' }}>monitoring</span>
+                      </span>
+                      <div style={{ fontSize: '30px', fontWeight: 800, lineHeight: 1, color: 'var(--mm-text)' }}>{adminData.stats.totalLogs}</div>
+                      <div style={{ fontSize: '14px', color: 'var(--mm-text-muted)', marginTop: '6px' }}>
+                        {lang === 'vi' ? 'Lượt uống hôm nay' : 'Logs Today'}
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* Users List Table */}
-                <div className="bg-slate-900/30 border border-slate-900 rounded-2xl p-6 space-y-4">
-                  <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider">
-                    {lang === 'vi' ? 'Danh sách bệnh nhân' : 'Patient Adherence Directory'}
-                  </h3>
-                  {loadingAdmin ? (
-                    <div className="py-12 flex justify-center items-center text-sm text-slate-400 gap-2">
-                      <div className="w-4 h-4 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
-                      {lang === 'vi' ? 'Đang tải danh sách người dùng...' : 'Loading patient directory...'}
+                {/* Two-column layout: patient table + broadcast */}
+                <div className="flex flex-col lg:flex-row items-start" style={{ gap: '22px' }}>
+                  {/* Patient Adherence Directory */}
+                  <div className="mm-card" style={{ flex: '1.9 1 0%', minWidth: 0, padding: 0, overflow: 'hidden', width: '100%' }}>
+                    <div className="flex items-center justify-between" style={{ padding: '18px 22px', borderBottom: '1px solid var(--mm-border-warm)', gap: '12px', flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: '17px', fontWeight: 700, color: 'var(--mm-text)' }}>
+                        {lang === 'vi' ? 'Phân tích theo bệnh nhân' : 'Patient Adherence Directory'}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--mm-surface-2)', border: '1px solid var(--mm-border-warm)', borderRadius: '10px', padding: '8px 12px', minWidth: '200px' }}>
+                        <span className="ms" style={{ fontSize: '19px', color: 'var(--mm-text-faint)' }}>search</span>
+                        <input type="text" value={patientSearch} onChange={(e) => setPatientSearch(e.target.value)} placeholder={lang === 'vi' ? 'Tìm bệnh nhân…' : 'Search patients…'} style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontFamily: 'inherit', fontSize: '13.5px', color: 'var(--mm-text)' }} />
+                      </div>
                     </div>
-                  ) : adminData && adminData.users.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-sm border-collapse">
-                        <thead>
-                          <tr className="border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider font-bold">
-                            <th className="py-3 px-4">{lang === 'vi' ? 'Bệnh nhân' : 'Patient Email'}</th>
-                            <th className="py-3 px-4">{lang === 'vi' ? 'Ngày tham gia' : 'Joined Date'}</th>
-                            <th className="py-3 px-4 text-center">{lang === 'vi' ? 'Số thuốc' : 'Medications'}</th>
-                            <th className="py-3 px-4 text-center">{lang === 'vi' ? 'Nhật ký hôm nay' : 'Today Adherence'}</th>
-                            <th className="py-3 px-4 text-center">{lang === 'vi' ? 'Chuỗi ngày' : 'Streak'}</th>
-                            <th className="py-3 px-4 text-right">{lang === 'vi' ? 'Hành động' : 'Actions'}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {adminData.users.map((item) => (
-                            <tr key={item.id} className="border-b border-slate-800/50 hover:bg-slate-900/10 text-slate-300">
-                              <td className="py-3 px-4 font-medium max-w-[200px] truncate">{item.email}</td>
-                              <td className="py-3 px-4 text-xs text-slate-500">
-                                {new Date(item.created_at).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US')}
-                              </td>
-                              <td className="py-3 px-4 text-center font-semibold text-indigo-400">{item.medCount}</td>
-                              <td className="py-3 px-4 text-center">
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                  item.todayLogs.total === 0 
-                                    ? 'bg-slate-800 text-slate-400' 
-                                    : (item.todayLogs.taken === item.todayLogs.total ? 'bg-emerald-500/10 text-emerald-400' : 'bg-orange-500/10 text-orange-400')
-                                }`}>
-                                  {item.todayLogs.taken} / {item.todayLogs.total}
-                                </span>
-                              </td>
-                              <td className="py-3 px-4 text-center">
-                                <span className="font-bold text-orange-400">🔥 {item.streak}</span>
-                              </td>
-                              <td className="py-3 px-4 text-right">
-                                <button
-                                  onClick={() => setSelectedAdminUser(item)}
-                                  className="px-3 py-1 bg-slate-900 border border-slate-800 hover:border-teal-500/40 text-teal-400 rounded-lg text-xs font-semibold cursor-pointer transition-all"
-                                >
-                                  {lang === 'vi' ? 'Xem lịch thuốc' : 'View Schedule'}
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="py-8 text-center text-sm text-slate-500">
-                      {lang === 'vi' ? 'Chưa có người dùng nào.' : 'No users found.'}
-                    </div>
-                  )}
-                </div>
 
-                {/* Announcement Broadcast Section */}
-                <div className="bg-slate-900/30 border border-slate-900 rounded-2xl p-6 space-y-4">
-                  <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                    <Bell className="w-4 h-4 text-orange-400" />
-                    {lang === 'vi' ? 'Phát thông báo hệ thống' : 'System-Wide Broadcast Alerts'}
-                  </h3>
-                  <div className="flex gap-3">
-                    <input
-                      type="text"
-                      value={broadcastMessage}
-                      onChange={(e) => setBroadcastMessage(e.target.value)}
-                      placeholder={lang === 'vi' ? 'Nhập nội dung thông báo khẩn cấp...' : 'Enter message to broadcast...'}
-                      className="flex-grow bg-slate-900/50 border border-slate-900 focus:border-teal-500 rounded-xl px-4 py-3 text-sm focus:outline-none transition-colors text-slate-200"
-                    />
-                    <button
-                      onClick={() => {
-                        if (!broadcastMessage.trim()) return
-                        alert(lang === 'vi' ? `Đã phát thông báo: "${broadcastMessage}" tới tất cả người dùng!` : `Broadcasted: "${broadcastMessage}" to all users!`)
-                        setBroadcastMessage('')
-                      }}
-                      className="px-5 py-3 bg-gradient-to-r from-orange-400 to-orange-500 hover:from-orange-500 hover:to-orange-600 text-slate-950 font-bold rounded-xl transition-all shadow-md cursor-pointer text-sm"
-                    >
-                      {lang === 'vi' ? 'Gửi' : 'Send'}
-                    </button>
+                    {loadingAdmin ? (
+                      <div className="flex justify-center items-center" style={{ padding: '48px 0', gap: '10px', fontSize: '14px', color: 'var(--mm-text-muted)' }}>
+                        <span className="ms" style={{ fontSize: '20px', color: 'var(--mm-primary)', animation: 'spin 1s linear infinite' }}>progress_activity</span>
+                        {lang === 'vi' ? 'Đang tải danh sách người dùng...' : 'Loading patient directory...'}
+                      </div>
+                    ) : adminData && adminData.users.length > 0 ? (
+                      <div style={{ overflowX: 'auto' }}>
+                        {/* header row */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1.2fr 1fr 72px', padding: '12px 22px', background: 'var(--mm-surface-2)', fontSize: '12.5px', fontWeight: 700, color: 'var(--mm-text-faint)', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--mm-border-warm)', minWidth: '640px' }}>
+                          <div>{lang === 'vi' ? 'Bệnh nhân' : 'Patient'}</div>
+                          <div style={{ textAlign: 'center' }}>{lang === 'vi' ? 'Chuỗi' : 'Streak'}</div>
+                          <div style={{ textAlign: 'center' }}>{lang === 'vi' ? 'Số thuốc' : 'Meds'}</div>
+                          <div style={{ textAlign: 'center' }}>{lang === 'vi' ? 'Uống hôm nay' : 'Today'}</div>
+                          <div style={{ textAlign: 'center' }}>{lang === 'vi' ? 'Tuân thủ' : 'Adherence'}</div>
+                          <div style={{ textAlign: 'right' }}>{lang === 'vi' ? 'Thao tác' : 'Actions'}</div>
+                        </div>
+                        {adminData.users.filter((item) => !patientSearch.trim() || (item.email || '').toLowerCase().includes(patientSearch.trim().toLowerCase())).map((item) => {
+                          const complete = item.todayLogs.total > 0 && item.todayLogs.taken === item.todayLogs.total
+                          const rate = item.todayLogs.total > 0 ? Math.round((item.todayLogs.taken / item.todayLogs.total) * 100) : 0
+                          return (
+                            <div
+                              key={item.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setSelectedAdminUser(item)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') setSelectedAdminUser(item) }}
+                              style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1.2fr 1fr 72px', padding: '14px 22px', alignItems: 'center', borderBottom: '1px solid var(--mm-border-warm)', minWidth: '640px', width: '100%', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
+                            >
+                              <div className="flex items-center" style={{ gap: '11px', minWidth: 0 }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '38px', height: '38px', borderRadius: '50%', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary-dark)', fontWeight: 700, fontSize: '14px', flexShrink: 0, textTransform: 'uppercase' }}>
+                                  {(item.name || item.email || '?').slice(0, 2)}
+                                </span>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontSize: '14.5px', fontWeight: 700, color: 'var(--mm-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '190px' }}>{item.name || item.email}</div>
+                                  <div style={{ fontSize: '12.5px', color: 'var(--mm-text-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '190px' }}>
+                                    {item.name ? item.email : new Date(item.created_at).toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US')}
+                                  </div>
+                                </div>
+                              </div>
+                              <div style={{ textAlign: 'center', fontWeight: 700, color: 'var(--mm-amber)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                                <span className="ms" style={{ fontSize: '18px' }}>local_fire_department</span>{item.streak}
+                              </div>
+                              <div style={{ textAlign: 'center', fontWeight: 600, color: 'var(--mm-text)' }}>{item.medCount}</div>
+                              <div style={{ textAlign: 'center', fontWeight: 700, color: complete ? 'var(--mm-primary)' : (item.todayLogs.total === 0 ? 'var(--mm-text-faint)' : 'var(--mm-amber)') }}>
+                                {item.todayLogs.taken}/{item.todayLogs.total}
+                              </div>
+                              <div style={{ textAlign: 'center' }}>
+                                <span style={{ display: 'inline-block', padding: '5px 11px', borderRadius: '999px', background: item.todayLogs.total === 0 ? 'var(--mm-surface-3)' : (complete ? 'var(--mm-primary-soft)' : '#FBEEE0'), color: item.todayLogs.total === 0 ? 'var(--mm-text-muted)' : (complete ? 'var(--mm-primary-dark)' : '#B06A2C'), fontSize: '13px', fontWeight: 700 }}>
+                                  {rate}%
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '2px' }}>
+                                <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedAdminUser(item) }} className="mm-btn mm-btn-ghost" style={{ padding: '6px', borderRadius: '9px' }} title={lang === 'vi' ? 'Chi tiết' : 'Details'}>
+                                  <span className="ms" style={{ fontSize: '19px' }}>visibility</span>
+                                </button>
+                                <button type="button" onClick={(e) => { e.stopPropagation(); handleDeleteUser(item.id, item.email) }} className="mm-btn mm-btn-ghost" style={{ padding: '6px', borderRadius: '9px', color: '#C0574E' }} title={lang === 'vi' ? 'Xoá người dùng' : 'Delete user'}>
+                                  <span className="ms" style={{ fontSize: '19px' }}>delete</span>
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ padding: '32px 0', textAlign: 'center', fontSize: '14px', color: 'var(--mm-text-faint)' }}>
+                        {lang === 'vi' ? 'Chưa có người dùng nào.' : 'No users found.'}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Broadcast + attention column */}
+                  <div className="flex flex-col" style={{ flex: '1 1 0%', minWidth: 0, gap: '16px', width: '100%' }}>
+                    {/* Announcement Broadcast */}
+                    <div className="mm-card" style={{ padding: '20px 22px' }}>
+                      <div className="flex items-center" style={{ gap: '9px', fontSize: '16px', fontWeight: 700, color: 'var(--mm-text)', marginBottom: '6px' }}>
+                        <span className="ms" style={{ fontSize: '22px', color: 'var(--mm-primary)' }}>campaign</span>
+                        {lang === 'vi' ? 'Phát thông báo hệ thống' : 'System-Wide Broadcast'}
+                      </div>
+                      <div style={{ fontSize: '13.5px', color: 'var(--mm-text-muted)', lineHeight: 1.5, marginBottom: '14px' }}>
+                        {lang === 'vi' ? 'Gửi tới toàn bộ người dùng đang hoạt động.' : 'Send an alert to all active users.'}
+                      </div>
+                      {/* Severity */}
+                      <div style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--mm-text-faint)', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: '7px' }}>{lang === 'vi' ? 'Mức độ' : 'Severity'}</div>
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                        {([
+                          { key: 'info', icon: 'info', vi: 'Thông tin', en: 'Info', bg: 'var(--mm-primary-soft)', color: 'var(--mm-primary-dark)', border: '#C9DCCF' },
+                          { key: 'warning', icon: 'warning', vi: 'Cảnh báo', en: 'Warning', bg: '#FBEEE0', color: '#B06A2C', border: '#F2D9B8' },
+                          { key: 'urgent', icon: 'priority_high', vi: 'Khẩn cấp', en: 'Urgent', bg: '#FDF1EF', color: '#C0574E', border: '#F0D6D2' },
+                        ] as const).map((s) => {
+                          const active = broadcastSeverity === s.key
+                          return (
+                            <button key={s.key} type="button" onClick={() => setBroadcastSeverity(s.key)} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 13px', borderRadius: '999px', fontSize: '13px', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer', background: active ? s.bg : 'transparent', color: active ? s.color : 'var(--mm-text-muted)', border: `1px solid ${active ? s.border : 'var(--mm-border-warm)'}` }}>
+                              <span className="ms" style={{ fontSize: '16px' }}>{s.icon}</span>{lang === 'vi' ? s.vi : s.en}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {/* Title */}
+                      <input
+                        type="text"
+                        value={broadcastTitle}
+                        onChange={(e) => setBroadcastTitle(e.target.value)}
+                        placeholder={lang === 'vi' ? 'Tiêu đề (vd: Bảo trì hệ thống tối nay)' : 'Title (e.g. System maintenance tonight)'}
+                        style={{ width: '100%', background: 'var(--mm-bg)', border: '1px solid var(--mm-border-warm)', borderRadius: '12px', padding: '12px 15px', fontSize: '14.5px', fontFamily: 'inherit', color: 'var(--mm-text)', outline: 'none', marginBottom: '10px' }}
+                      />
+                      <textarea
+                        value={broadcastMessage}
+                        onChange={(e) => setBroadcastMessage(e.target.value)}
+                        placeholder={lang === 'vi' ? 'Nội dung thông báo…' : 'Message content…'}
+                        style={{ width: '100%', background: 'var(--mm-bg)', border: '1px solid var(--mm-border-warm)', borderRadius: '12px', padding: '13px 15px', fontSize: '14.5px', fontFamily: 'inherit', color: 'var(--mm-text)', minHeight: '78px', lineHeight: 1.5, outline: 'none', resize: 'vertical' }}
+                      />
+                      <button
+                        onClick={async () => {
+                          if (!broadcastMessage.trim()) return
+                          const payload = { message: broadcastMessage.trim().slice(0, 500), title: broadcastTitle.trim().slice(0, 160) || null, severity: broadcastSeverity }
+                          try {
+                            const res = await fetch('/api/broadcast', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+                            const data = await res.json()
+                            if (!res.ok) { alert(data.error || (lang === 'vi' ? 'Không phát được thông báo.' : 'Failed to broadcast.')); return }
+                            const now = new Date().toISOString()
+                            setLatestBroadcast({ id: now, message: payload.message, title: payload.title, severity: payload.severity, created_at: now })
+                            setDismissedBroadcast(null) // make sure the fresh broadcast is shown
+                            setBroadcastMessage(''); setBroadcastTitle(''); setBroadcastSeverity('info')
+                            alert(lang === 'vi' ? 'Đã phát thông báo tới tất cả người dùng!' : 'Broadcast sent to all users!')
+                          } catch {
+                            alert(lang === 'vi' ? 'Lỗi kết nối.' : 'Connection error.')
+                          }
+                        }}
+                        className="mm-btn mm-btn-primary"
+                        style={{ marginTop: '12px', width: '100%', fontSize: '15px', fontWeight: 700, padding: '13px', gap: '8px' }}
+                      >
+                        <span className="ms" style={{ fontSize: '20px' }}>send</span>
+                        {lang === 'vi' ? 'Phát thông báo' : 'Send'}
+                      </button>
+                      {/* Recently sent */}
+                      <div style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--mm-text-faint)', textTransform: 'uppercase', letterSpacing: '0.03em', margin: '18px 0 8px' }}>{lang === 'vi' ? 'Đã gửi gần đây' : 'Recently sent'}</div>
+                      {latestBroadcast ? (() => {
+                        const bs = broadcastStyle(latestBroadcast.severity)
+                        return (
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', background: bs.bg, border: `1px solid ${bs.border}`, borderRadius: '12px', padding: '12px 14px' }}>
+                          <span className="ms" style={{ fontSize: '18px', color: bs.color, marginTop: '1px' }}>{bs.icon}</span>
+                          <div style={{ minWidth: 0 }}>
+                            {latestBroadcast.title?.trim() && <div style={{ fontSize: '13.5px', fontWeight: 700, color: bs.color, lineHeight: 1.45 }}>{latestBroadcast.title}</div>}
+                            <div style={{ fontSize: '13.5px', color: 'var(--mm-text)', lineHeight: 1.45 }}>{latestBroadcast.message}</div>
+                            <div style={{ fontSize: '11.5px', color: 'var(--mm-text-faint)', marginTop: '4px' }}>{new Date(latestBroadcast.created_at).toLocaleString(lang === 'vi' ? 'vi-VN' : 'en-US')}</div>
+                          </div>
+                        </div>
+                        )
+                      })() : (
+                        <div style={{ fontSize: '13px', color: 'var(--mm-text-faint)', fontStyle: 'italic' }}>{lang === 'vi' ? 'Chưa có thông báo nào được gửi.' : 'No broadcasts sent yet.'}</div>
+                      )}
+                    </div>
+
+                    {/* Attention card */}
+                    <div style={{ background: '#FDF3E7', border: '1px solid #F2D9B8', borderRadius: '18px', padding: '20px 22px' }}>
+                      <div className="flex items-center" style={{ gap: '9px', fontSize: '16px', fontWeight: 700, color: '#B06A2C', marginBottom: '6px' }}>
+                        <span className="ms" style={{ fontSize: '22px' }}>priority_high</span>
+                        {lang === 'vi' ? 'Cần chú ý' : 'Needs Attention'}
+                      </div>
+                      <div style={{ fontSize: '13.5px', color: '#7A6A52', lineHeight: 1.55 }}>
+                        {(() => {
+                          const lowCount = (adminData?.users || []).filter((u) => u.todayLogs.total > 0 && (u.todayLogs.taken / u.todayLogs.total) < 0.6).length
+                          if (lowCount > 0) {
+                            return lang === 'vi'
+                              ? `${lowCount} bệnh nhân có tỷ lệ tuân thủ dưới 60% hôm nay. Nên gửi nhắc nhở riêng hoặc liên hệ người thân.`
+                              : `${lowCount} patient(s) below 60% adherence today. Consider sending personal reminders or contacting caregivers.`
+                          }
+                          return lang === 'vi'
+                            ? 'Tất cả bệnh nhân đang tuân thủ tốt hôm nay. Theo dõi thường xuyên để duy trì.'
+                            : 'All patients are on track today. Keep monitoring to maintain adherence.'
+                        })()}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </section>
             )}
 
+            {/* Weekly schedule (Lịch thuốc) */}
+            {activeTab === 'schedule' && (
+              <section className="flex-1 min-h-0 flex flex-col overflow-y-auto p-6 md:p-8 pb-24 md:pb-8" style={{ background: 'var(--mm-bg)' }}>
+                {(() => {
+                  const dayLabels = lang === 'vi' ? ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+                  const now = new Date()
+                  const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+                  const monday = new Date(todayMid)
+                  monday.setDate(todayMid.getDate() - ((todayMid.getDay() + 6) % 7) + weekOffset * 7)
+                  const weekDates = Array.from({ length: 7 }, (_, i) => { const d = new Date(monday); d.setDate(monday.getDate() + i); return d })
+                  const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+                  const isScheduledOn = (med: Medication, date: Date) => {
+                    const f = (med.frequency || '').toLowerCase()
+                    const created = new Date(med.created_at)
+                    const createdMid = new Date(created.getFullYear(), created.getMonth(), created.getDate())
+                    if (date < createdMid) return false
+                    if (f.includes('week') || f.includes('tuần')) return date.getDay() === created.getDay()
+                    if (f.includes('other') || f.includes('cách')) return Math.round((date.getTime() - createdMid.getTime()) / 86400000) % 2 === 0
+                    return true
+                  }
+                  const fmt = (d: Date) => d.toLocaleDateString(lang === 'vi' ? 'vi-VN' : 'en-US', { day: 'numeric', month: 'long' })
+                  const dosesPerDay = medications.reduce((sum, m) => sum + (isScheduledOn(m, todayMid) ? (m.schedule?.length || 1) : 0), 0)
+                  return (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '12px', flexWrap: 'wrap', marginBottom: '22px' }}>
+                        <div>
+                          <h2 style={{ fontSize: '24px', fontWeight: 800, letterSpacing: '-0.01em', color: 'var(--mm-text)' }}>{fmt(weekDates[0])} — {fmt(weekDates[6])}</h2>
+                          <p style={{ fontSize: '15px', color: 'var(--mm-text-muted)', marginTop: '3px' }}>
+                            {lang === 'vi' ? `${medications.length} loại thuốc đang dùng · ${dosesPerDay} lần uống mỗi ngày` : `${medications.length} medications · ${dosesPerDay} doses per day`}
+                          </p>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <button type="button" onClick={() => setWeekOffset((w) => w - 1)} className="mm-icon-badge" style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'var(--mm-surface-2)', border: '1px solid var(--mm-border-warm)', color: 'var(--mm-text-muted)', cursor: 'pointer' }}><span className="ms" style={{ fontSize: '22px' }}>chevron_left</span></button>
+                          <button type="button" onClick={() => setWeekOffset((w) => w + 1)} className="mm-icon-badge" style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'var(--mm-surface-2)', border: '1px solid var(--mm-border-warm)', color: 'var(--mm-text-muted)', cursor: 'pointer' }}><span className="ms" style={{ fontSize: '22px' }}>chevron_right</span></button>
+                          {weekOffset !== 0 && (
+                            <button type="button" onClick={() => setWeekOffset(0)} className="mm-btn mm-btn-outline" style={{ padding: '9px 14px', fontSize: '14px' }}>{lang === 'vi' ? 'Tuần này' : 'This week'}</button>
+                          )}
+                          <button type="button" onClick={() => setShowAddModal(true)} className="mm-btn mm-btn-primary" style={{ padding: '0 18px', height: '42px', fontSize: '15px' }}>
+                            <span className="ms" style={{ fontSize: '20px' }}>add</span>{lang === 'vi' ? 'Thêm thuốc' : 'Add'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {medications.length === 0 ? (
+                        <ComingSoon showDevBadge={false} lang={lang} icon="calendar_month" title={lang === 'vi' ? 'Chưa có thuốc nào trong lịch' : 'No medications yet'} desc={lang === 'vi' ? 'Thêm thuốc hoặc quét đơn thuốc để xem lịch uống theo tuần.' : 'Add a medication or scan a prescription to see your weekly plan.'} cta={lang === 'vi' ? 'Thêm thuốc' : 'Add medication'} onCta={() => setShowAddModal(true)} />
+                      ) : (
+                        <div className="mm-card" style={{ padding: 0, overflow: 'hidden' }}>
+                          <div style={{ overflowX: 'auto' }}>
+                            <div style={{ minWidth: '720px' }}>
+                              {/* header */}
+                              <div style={{ display: 'grid', gridTemplateColumns: '200px repeat(7, 1fr)', background: 'var(--mm-surface-2)', borderBottom: '1px solid var(--mm-border-warm)' }}>
+                                <div style={{ padding: '14px 18px', fontSize: '13px', fontWeight: 700, color: 'var(--mm-text-faint)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{lang === 'vi' ? 'Thuốc' : 'Medication'}</div>
+                                {weekDates.map((d, i) => {
+                                  const isToday = sameDay(d, todayMid)
+                                  return (
+                                    <div key={i} style={{ padding: '10px 6px', textAlign: 'center', background: isToday ? 'var(--mm-primary-soft)' : 'transparent' }}>
+                                      <div style={{ fontSize: '13px', fontWeight: isToday ? 700 : 600, color: isToday ? 'var(--mm-primary-dark)' : 'var(--mm-text-faint)' }}>{dayLabels[i]}</div>
+                                      {isToday ? (
+                                        <div style={{ margin: '3px auto 0', width: '28px', height: '28px', borderRadius: '50%', background: 'var(--mm-primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: 700 }}>{d.getDate()}</div>
+                                      ) : (
+                                        <div style={{ fontSize: '16px', fontWeight: 700, marginTop: '2px', color: 'var(--mm-text)' }}>{d.getDate()}</div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                              {/* rows */}
+                              {medications.map((med, ri) => (
+                                <div key={med.id} style={{ display: 'grid', gridTemplateColumns: '200px repeat(7, 1fr)', alignItems: 'center', borderBottom: ri === medications.length - 1 ? 'none' : '1px solid var(--mm-border-warm)' }}>
+                                  <div style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '11px', minWidth: 0 }}>
+                                    <span className="mm-icon-badge" style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', flexShrink: 0 }}><span className="ms" style={{ fontSize: '20px' }}>medication</span></span>
+                                    <div style={{ minWidth: 0 }}>
+                                      <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--mm-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{med.name}</div>
+                                      <div style={{ fontSize: '12.5px', color: 'var(--mm-text-faint)' }}>{(med.schedule || []).join(' · ') || '—'}</div>
+                                    </div>
+                                  </div>
+                                  {weekDates.map((d, i) => {
+                                    const scheduled = isScheduledOn(med, d)
+                                    const isToday = sameDay(d, todayMid)
+                                    const isFuture = d > todayMid
+                                    let cell: React.ReactNode = null
+                                    if (!scheduled) {
+                                      cell = <span style={{ color: 'var(--mm-border)', fontSize: '15px' }}>·</span>
+                                    } else if (isToday) {
+                                      const medLogs = logs.filter((l) => l.medication_id === med.id)
+                                      const allTaken = medLogs.length > 0 && medLogs.every((l) => l.status === 'taken')
+                                      const anyMissed = medLogs.some((l) => l.status === 'missed')
+                                      if (allTaken) cell = <span className="ms" style={{ fontSize: '25px', color: 'var(--mm-primary)' }}>check_circle</span>
+                                      else if (anyMissed) cell = <span className="ms" style={{ fontSize: '25px', color: '#C79A3B' }}>error</span>
+                                      else cell = <span style={{ display: 'inline-block', width: '22px', height: '22px', borderRadius: '50%', border: '2px solid var(--mm-primary)' }} />
+                                    } else if (isFuture) {
+                                      cell = <span style={{ display: 'inline-block', width: '22px', height: '22px', borderRadius: '50%', border: '2px solid #D6DCCF' }} />
+                                    } else {
+                                      cell = <span style={{ display: 'inline-block', width: '22px', height: '22px', borderRadius: '50%', border: '2px dashed #D6DCCF' }} />
+                                    }
+                                    return <div key={i} style={{ textAlign: 'center', padding: '12px 6px', background: isToday ? 'rgba(230,239,232,0.4)' : 'transparent' }}>{cell}</div>
+                                  })}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* legend */}
+                      <div style={{ display: 'flex', gap: '22px', flexWrap: 'wrap', marginTop: '16px', fontSize: '13.5px', color: 'var(--mm-text-muted)' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><span className="ms" style={{ fontSize: '18px', color: 'var(--mm-primary)' }}>check_circle</span>{lang === 'vi' ? 'Đã uống' : 'Taken'}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><span style={{ width: '15px', height: '15px', borderRadius: '50%', border: '2px solid var(--mm-primary)' }} />{lang === 'vi' ? 'Hôm nay' : 'Today'}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><span style={{ width: '15px', height: '15px', borderRadius: '50%', border: '2px solid #D6DCCF' }} />{lang === 'vi' ? 'Sắp tới' : 'Upcoming'}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}><span className="ms" style={{ fontSize: '18px', color: '#C79A3B' }}>error</span>{lang === 'vi' ? 'Bỏ lỡ' : 'Missed'}</span>
+                      </div>
+                      <p style={{ fontSize: '12.5px', color: 'var(--mm-text-faint)', marginTop: '10px' }}>{lang === 'vi' ? 'Ghi chú: trạng thái đã uống/bỏ lỡ hiện có cho hôm nay; các ngày khác hiển thị theo lịch trình.' : 'Note: taken/missed status is live for today; other days show the planned schedule.'}</p>
+                    </>
+                  )
+                })()}
+              </section>
+            )}
+
+            {/* Stats (Thống kê) */}
+            {activeTab === 'stats' && (
+              <section className="flex-1 min-h-0 flex flex-col overflow-y-auto p-6 md:p-8 pb-24 md:pb-8" style={{ background: 'var(--mm-bg)' }}>
+                {(() => {
+                  const byDay = weekly?.byDay ?? []
+                  const byMed = weekly?.byMed ?? []
+                  const weekPct = weekly?.weekPct ?? 0
+                  const weekTaken = weekly?.taken ?? 0
+                  const weekTotal = weekly?.total ?? 0
+                  const worst = byMed.length ? byMed[byMed.length - 1] : null
+                  return (
+                    <>
+                      <div style={{ marginBottom: '22px' }}>
+                        <h2 style={{ fontSize: '24px', fontWeight: 800, letterSpacing: '-0.01em', color: 'var(--mm-text)' }}>{lang === 'vi' ? 'Thống kê tuân thủ' : 'Adherence statistics'}</h2>
+                        <p style={{ fontSize: '15px', color: 'var(--mm-text-muted)', marginTop: '3px' }}>{lang === 'vi' ? 'Tổng quan tuân thủ điều trị của bạn.' : 'An overview of your treatment adherence.'}</p>
+                      </div>
+
+                      {/* Top 3 summary cards */}
+                      <div className="grid grid-cols-1 md:grid-cols-3" style={{ gap: '16px', marginBottom: '22px' }}>
+                        {/* Streak (highlighted) */}
+                        <div style={{ borderRadius: '18px', padding: '22px 24px', background: 'var(--mm-primary)', color: '#fff', display: 'flex', alignItems: 'center', gap: '18px', position: 'relative', overflow: 'hidden' }}>
+                          <div style={{ position: 'absolute', right: '-30px', top: '-30px', width: '130px', height: '130px', borderRadius: '50%', background: 'rgba(255,255,255,0.08)' }} />
+                          <span className="mm-icon-badge" style={{ width: '54px', height: '54px', borderRadius: '15px', background: 'rgba(255,255,255,0.18)', color: '#fff', flexShrink: 0 }}><span className="ms" style={{ fontSize: '30px' }}>local_fire_department</span></span>
+                          <div style={{ position: 'relative' }}>
+                            <div style={{ fontSize: '38px', fontWeight: 800, lineHeight: 1 }}>{streak}</div>
+                            <div style={{ fontSize: '14px', opacity: 0.92, marginTop: '4px', lineHeight: 1.3 }}>{lang === 'vi' ? 'ngày tuân thủ liên tục' : 'day adherence streak'}</div>
+                          </div>
+                        </div>
+                        {/* Weekly ring */}
+                        <div className="mm-card" style={{ padding: '20px 22px', display: 'flex', alignItems: 'center', gap: '18px' }}>
+                          <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: `conic-gradient(var(--mm-primary) 0% ${weekPct}%, var(--mm-primary-soft) ${weekPct}% 100%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: 'var(--mm-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: 800, color: 'var(--mm-primary-dark)' }}>{weekPct}%</div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--mm-text)' }}>{lang === 'vi' ? 'Tuân thủ tuần này' : 'This week'}</div>
+                            <div style={{ fontSize: '13.5px', color: 'var(--mm-text-muted)', marginTop: '3px', lineHeight: 1.4 }}>{lang === 'vi' ? 'Trung bình 7 ngày qua' : 'Average over 7 days'}</div>
+                          </div>
+                        </div>
+                        {/* Doses on time */}
+                        <div className="mm-card" style={{ padding: '20px 22px', display: 'flex', alignItems: 'center', gap: '18px' }}>
+                          <span className="mm-icon-badge" style={{ width: '54px', height: '54px', borderRadius: '15px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', flexShrink: 0 }}><span className="ms" style={{ fontSize: '28px' }}>event_available</span></span>
+                          <div>
+                            <div style={{ fontSize: '30px', fontWeight: 800, lineHeight: 1, color: 'var(--mm-text)' }}>{weekTaken}<span style={{ fontSize: '18px', color: 'var(--mm-text-faint)' }}>/{weekTotal}</span></div>
+                            <div style={{ fontSize: '14px', color: 'var(--mm-text-muted)', marginTop: '4px', lineHeight: 1.3 }}>{lang === 'vi' ? 'liều đã uống đúng hẹn' : 'doses taken on time'}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col lg:flex-row items-stretch" style={{ gap: '22px' }}>
+                        {/* Daily bar chart */}
+                        <div className="mm-card" style={{ flex: '1.15 1 0%', minWidth: 0, width: '100%', padding: '20px 22px' }}>
+                          <div style={{ fontSize: '17px', fontWeight: 700, color: 'var(--mm-text)' }}>{lang === 'vi' ? 'Tỷ lệ uống đúng theo ngày' : 'On-time rate by day'}</div>
+                          <div style={{ fontSize: '13px', color: 'var(--mm-text-faint)', marginTop: '2px', marginBottom: '18px' }}>{lang === 'vi' ? '7 ngày gần nhất · ngưỡng đạt 80%' : 'Last 7 days · 80% target'}</div>
+                          {!weekly ? (
+                            <div style={{ fontSize: '14px', color: 'var(--mm-text-faint)', padding: '40px 0', textAlign: 'center' }}>{lang === 'vi' ? 'Đang tải…' : 'Loading…'}</div>
+                          ) : (
+                            <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', gap: '10px', height: '176px', paddingTop: '18px' }}>
+                              {/* 80% threshold line */}
+                              <div style={{ position: 'absolute', left: 0, right: 0, bottom: `${18 + 0.8 * 140}px`, borderTop: '1px dashed var(--mm-border)', zIndex: 0 }} />
+                              {byDay.map((d, i) => {
+                                const h = d.pct == null ? 4 : Math.max(4, Math.round((d.pct / 100) * 140))
+                                const good = (d.pct ?? 0) >= 80
+                                return (
+                                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', zIndex: 1 }}>
+                                    <div style={{ fontSize: '11px', fontWeight: 700, color: d.pct == null ? 'var(--mm-text-faint)' : good ? 'var(--mm-primary)' : '#C79A3B', marginBottom: '5px' }}>{d.pct == null ? '' : `${d.pct}%`}</div>
+                                    <div style={{ width: '100%', maxWidth: '30px', height: `${h}px`, borderRadius: '7px 7px 3px 3px', background: d.pct == null ? 'var(--mm-surface-3)' : good ? 'var(--mm-primary)' : '#E6B34D' }} />
+                                    <div style={{ fontSize: '12px', color: 'var(--mm-text-faint)', marginTop: '8px' }}>{d.label}</div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Per-medication (weekly) + tip */}
+                        <div className="mm-card" style={{ flex: '1 1 0%', minWidth: 0, width: '100%', padding: '20px 22px', display: 'flex', flexDirection: 'column' }}>
+                          <div style={{ fontSize: '17px', fontWeight: 700, color: 'var(--mm-text)', marginBottom: '16px' }}>{lang === 'vi' ? 'Tuân thủ theo từng thuốc' : 'Adherence by medication'}</div>
+                          {byMed.length === 0 ? (
+                            <div style={{ fontSize: '14px', color: 'var(--mm-text-faint)', padding: '12px 0' }}>{weekly ? (lang === 'vi' ? 'Chưa có dữ liệu tuần này.' : 'No data this week.') : (lang === 'vi' ? 'Đang tải…' : 'Loading…')}</div>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                              {byMed.map((m) => {
+                                const good = m.pct >= 80
+                                return (
+                                  <div key={m.name}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '6px' }}>
+                                      <span style={{ fontWeight: 600, color: 'var(--mm-text)' }}>{m.name}</span>
+                                      <span style={{ fontWeight: 700, color: good ? 'var(--mm-primary)' : '#B06A2C' }}>{m.pct}%</span>
+                                    </div>
+                                    <div style={{ height: '8px', borderRadius: '999px', background: 'var(--mm-surface-3)', overflow: 'hidden' }}>
+                                      <div style={{ height: '100%', width: `${m.pct}%`, background: good ? 'var(--mm-primary)' : '#E6B34D', borderRadius: '999px' }} />
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                          {worst && worst.pct < 90 && (
+                            <div style={{ marginTop: '18px', display: 'flex', alignItems: 'flex-start', gap: '10px', background: '#FDF3E7', border: '1px solid #F2D9B8', borderRadius: '13px', padding: '13px 15px' }}>
+                              <span className="ms" style={{ fontSize: '20px', color: '#B06A2C', flexShrink: 0 }}>lightbulb</span>
+                              <div style={{ fontSize: '13px', color: '#7A6A52', lineHeight: 1.5 }}>
+                                {lang === 'vi'
+                                  ? <>Bạn tuân thủ <b>{worst.name}</b> thấp nhất tuần này ({worst.pct}%). Cân nhắc đặt thêm nhắc nhở cho thuốc này.</>
+                                  : <>Your lowest adherence this week is <b>{worst.name}</b> ({worst.pct}%). Consider adding a reminder.</>}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )
+                })()}
+              </section>
+            )}
+
           </main>
 
-          {/* Mobile Bottom Navigation Bar */}
-          <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-slate-900 border-t border-slate-800 flex items-center justify-around z-30 px-6 backdrop-blur-md bg-slate-900/90">
-            <button
-              onClick={() => setActiveTab('dashboard')}
-              className={`flex flex-col items-center justify-center gap-1 transition-colors ${
-                activeTab === 'dashboard' ? 'text-teal-400 font-bold' : 'text-slate-400 hover:text-slate-300'
-              }`}
-            >
-              <Activity className="w-5 h-5" />
-              <span className="text-[10px]">Kiểm soát</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('chat')}
-              className={`flex flex-col items-center justify-center gap-1 transition-colors ${
-                activeTab === 'chat' ? 'text-teal-400 font-bold' : 'text-slate-400 hover:text-slate-300'
-              }`}
-            >
-              <div className="relative">
-                <MessageSquare className="w-5 h-5" />
-                <span className="absolute -top-1 -right-1 flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-                </span>
-              </div>
-              <span className="text-[10px]">Trợ lý AI</span>
-            </button>
-            {isAdmin && (
-              <button
-                onClick={() => setActiveTab('admin')}
-                className={`flex flex-col items-center justify-center gap-1 transition-colors ${
-                  activeTab === 'admin' ? 'text-teal-400 font-bold' : 'text-slate-400 hover:text-slate-300'
-                }`}
-              >
-                <ShieldAlert className="w-5 h-5" />
-                <span className="text-[10px]">Quản trị</span>
-              </button>
-            )}
-          </div>
+          {isMobileNav && <BottomNav lang={lang} activeTab={activeTab} setActiveTab={setActiveTab} isAdmin={!!isAdmin} />}
 
-          {/* Manual Add Medication Modal */}
-          {/* Add Medication Modal */}
-          {showAddModal && (
-            <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-              <div className={`w-full max-w-md border rounded-2xl p-6 shadow-2xl relative transition-all ${
-                isLightMode ? 'bg-white border-slate-200 text-slate-800' : 'bg-slate-900 border-slate-800 text-slate-100'
-              }`}>
-                
-                <button
-                  onClick={() => setShowAddModal(false)}
-                  className={`absolute top-4 right-4 cursor-pointer transition-colors ${
-                    isLightMode ? 'text-slate-400 hover:text-slate-600' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <X className="w-5 h-5" />
-                </button>
-
-                <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${isLightMode ? 'text-slate-900' : 'text-slate-100'}`}>
-                  <Plus className="w-5 h-5 text-indigo-500" />
-                  Đăng Ký Lịch Uống Thuốc Mới
-                </h3>
-
-                <form onSubmit={handleManualAddMedication} className="space-y-4">
-                  <div>
-                    <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                      isLightMode ? 'text-slate-600' : 'text-slate-400'
-                    }`}>
-                      Tên thuốc
-                    </label>
-                    <input
-                      type="text"
-                      value={newMedName}
-                      onChange={(e) => setNewMedName(e.target.value)}
-                      className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                        isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                      }`}
-                      placeholder="Ví dụ: Aspirin, Paracetamol"
-                      required
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Liều lượng
-                      </label>
-                      <input
-                        type="text"
-                        value={newMedDosage}
-                        onChange={(e) => setNewMedDosage(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                        }`}
-                        placeholder="Ví dụ: 81mg, 1 viên"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Thời gian uống
-                      </label>
-                      <input
-                        type="time"
-                        value={newMedTime}
-                        onChange={(e) => setNewMedTime(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                        }`}
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Tần suất
-                      </label>
-                      <select
-                        value={newMedFreq}
-                        onChange={(e) => setNewMedFreq(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-300'
-                        }`}
-                      >
-                        <option value="Hàng ngày">Hàng ngày (Daily)</option>
-                        <option value="Cách ngày">Cách ngày</option>
-                        <option value="Hàng tuần">Hàng tuần</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Số lượng thuốc (Tồn kho)
-                      </label>
-                      <input
-                        type="number"
-                        value={newMedStock}
-                        onChange={(e) => setNewMedStock(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                        }`}
-                        placeholder="Mặc định: 30"
-                        min="0.1"
-                        step="any"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Số viên uống mỗi lần
-                      </label>
-                      <input
-                        type="number"
-                        value={newMedDosageQty}
-                        onChange={(e) => setNewMedDosageQty(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                        }`}
-                        placeholder="Mặc định: 1"
-                        min="0.1"
-                        step="any"
-                      />
-                    </div>
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Nhãn đơn thuốc (Tùy chọn)
-                      </label>
-                      <input
-                        type="text"
-                        value={newMedPrescriptionName}
-                        onChange={(e) => setNewMedPrescriptionName(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                        }`}
-                        placeholder="Ví dụ: Đơn khớp, Đơn huyết áp"
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="w-full bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg text-sm cursor-pointer min-h-[48px] flex items-center justify-center"
-                  >
-                    Thêm Lịch Trình
-                  </button>
-                </form>
-              </div>
-            </div>
-          )}
-
-          {/* Edit Medication Modal */}
-          {showEditModal && editingMedication && (
-            <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-              <div className={`w-full max-w-md border rounded-2xl p-6 shadow-2xl relative transition-all ${
-                isLightMode ? 'bg-white border-slate-200 text-slate-800' : 'bg-slate-900 border-slate-800 text-slate-100'
-              }`}>
-                
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowEditModal(false)
-                    setEditingMedication(null)
-                  }}
-                  className={`absolute top-4 right-4 cursor-pointer transition-colors ${
-                    isLightMode ? 'text-slate-400 hover:text-slate-600' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <X className="w-5 h-5" />
-                </button>
-
-                <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${isLightMode ? 'text-slate-900' : 'text-slate-100'}`}>
-                  <Pencil className="w-5 h-5 text-indigo-500" />
-                  Chỉnh Sửa Lịch Uống Thuốc
-                </h3>
-
-                <form onSubmit={handleSaveEditMedication} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Tên thuốc
-                      </label>
-                      <input
-                        type="text"
-                        value={editMedName}
-                        onChange={(e) => setEditMedName(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                        }`}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Nhãn đơn thuốc (Tùy chọn)
-                      </label>
-                      <input
-                        type="text"
-                        value={editMedPrescriptionName}
-                        onChange={(e) => setEditMedPrescriptionName(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                        }`}
-                        placeholder="Ví dụ: Đơn khớp, Đơn huyết áp"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Liều lượng
-                      </label>
-                      <input
-                        type="text"
-                        value={editMedDosage}
-                        onChange={(e) => setEditMedDosage(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                        }`}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Giờ uống thuốc
-                      </label>
-                      <input
-                        type="time"
-                        value={editMedTime}
-                        onChange={(e) => setEditMedTime(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                        }`}
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Tần suất
-                      </label>
-                      <select
-                        value={editMedFreq}
-                        onChange={(e) => setEditMedFreq(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-300'
-                        }`}
-                      >
-                        <option value="Hàng ngày">Hàng ngày (Daily)</option>
-                        <option value="Cách ngày">Cách ngày</option>
-                        <option value="Hàng tuần">Hàng tuần</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Số viên uống mỗi lần
-                      </label>
-                      <input
-                        type="number"
-                        value={editMedDosageQty}
-                        onChange={(e) => setEditMedDosageQty(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                        }`}
-                        min="0.1"
-                        step="any"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Tổng kho ban đầu
-                      </label>
-                      <input
-                        type="number"
-                        value={editMedStock}
-                        onChange={(e) => setEditMedStock(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                        }`}
-                        min="0.1"
-                        step="any"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                        isLightMode ? 'text-slate-600' : 'text-slate-400'
-                      }`}>
-                        Tồn kho còn lại
-                      </label>
-                      <input
-                        type="number"
-                        value={editMedRemainingStock}
-                        onChange={(e) => setEditMedRemainingStock(e.target.value)}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 transition-colors ${
-                          isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                        }`}
-                        min="0"
-                        step="any"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="w-full bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg text-sm cursor-pointer min-h-[48px] flex items-center justify-center"
-                  >
-                    Lưu Thay Đổi
-                  </button>
-                </form>
-              </div>
-            </div>
-          )}
-
-          {/* Caregiver Settings Modal */}
-          {showCaregiverModal && (
-            <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-              <div className={`w-full max-w-md border rounded-2xl p-6 shadow-2xl relative transition-all ${
-                isLightMode ? 'bg-white border-slate-200 text-slate-800' : 'bg-slate-900 border-slate-800 text-slate-100'
-              }`}>
-                
-                <button
-                  type="button"
-                  onClick={() => setShowCaregiverModal(false)}
-                  className={`absolute top-4 right-4 cursor-pointer transition-colors ${
-                    isLightMode ? 'text-slate-400 hover:text-slate-600' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <X className="w-5 h-5" />
-                </button>
-
-                <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-rose-500">
-                  <Bell className="w-5 h-5 text-rose-500" />
-                  Cấu Hình Người Bảo Hộ (Caregiver)
-                </h3>
-
-                <div className="space-y-4">
-                  <div>
-                    <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                      isLightMode ? 'text-slate-600' : 'text-slate-400'
-                    }`}>
-                      Tên người bảo hộ
-                    </label>
-                    <input
-                      type="text"
-                      value={caregiverName}
-                      onChange={(e) => setCaregiverName(e.target.value)}
-                      className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-rose-500 transition-colors ${
-                        isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                      }`}
-                      placeholder="Ví dụ: Mẹ, Bố, Bác sĩ"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${
-                      isLightMode ? 'text-slate-600' : 'text-slate-400'
-                    }`}>
-                      Email nhận cảnh báo trễ thuốc
-                    </label>
-                    <input
-                      type="email"
-                      value={caregiverEmail}
-                      onChange={(e) => setCaregiverEmail(e.target.value)}
-                      className={`w-full border rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-rose-500 transition-colors ${
-                        isLightMode ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-slate-100'
-                      }`}
-                      placeholder="name@domain.com"
-                      required
-                    />
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={handleSaveCaregiverSettings}
-                    className="w-full bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white font-bold py-3 rounded-xl transition-all shadow-lg text-sm cursor-pointer min-h-[48px] flex items-center justify-center"
-                  >
-                    Lưu Cấu Hình
-                  </button>
+          {/* Patient Profile overlay */}
+          {showProfile && (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'var(--mm-bg)', overflowY: 'auto' }}>
+              <div style={{ maxWidth: '980px', margin: '0 auto', padding: '20px 20px 60px' }}>
+                {/* top bar */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 0 20px' }}>
+                  <button type="button" onClick={() => setShowProfile(false)} className="mm-icon-badge" style={{ width: '42px', height: '42px', borderRadius: '12px', background: 'var(--mm-surface)', border: '1px solid var(--mm-border-warm)', color: 'var(--mm-text-muted)', cursor: 'pointer' }}><span className="ms" style={{ fontSize: '22px' }}>arrow_back</span></button>
+                  <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--mm-text)' }}>{lang === 'vi' ? 'Hồ sơ của bạn' : 'Your profile'}</div>
                 </div>
-              </div>
-            </div>
-          )}
+                <div className="flex flex-col md:flex-row items-start" style={{ gap: '22px' }}>
+                  {/* Left profile card */}
+                  <div className="mm-card" style={{ width: '100%', maxWidth: '340px', padding: '26px 24px', textAlign: 'center', flexShrink: 0 }}>
+                    <span className="mm-icon-badge" style={{ width: '88px', height: '88px', borderRadius: '50%', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary-dark)', fontWeight: 800, fontSize: '30px', margin: '0 auto', textTransform: 'uppercase' }}>{(user.email || '?').slice(0, 2)}</span>
+                    <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--mm-text)', marginTop: '14px' }}>{user.email ? user.email.split('@')[0] : (lang === 'vi' ? 'Người dùng' : 'User')}</div>
+                    <div style={{ fontSize: '14px', color: 'var(--mm-text-faint)', marginTop: '2px', wordBreak: 'break-all' }}>{user.email}</div>
+                    <div style={{ height: '1px', background: 'var(--mm-border-warm)', margin: '22px 0' }} />
+                    <div style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      <div>
+                        <div style={{ fontSize: '12.5px', color: 'var(--mm-text-faint)', fontWeight: 600, textTransform: 'uppercase' }}>{lang === 'vi' ? 'Chuỗi ngày tuân thủ' : 'Adherence streak'}</div>
+                        <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--mm-text)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}><span className="ms" style={{ fontSize: '18px', color: 'var(--mm-orange)' }}>local_fire_department</span>{streak} {lang === 'vi' ? 'ngày' : 'days'}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '12.5px', color: 'var(--mm-text-faint)', fontWeight: 600, textTransform: 'uppercase' }}>{lang === 'vi' ? 'Thuốc đang dùng' : 'Active medications'}</div>
+                        <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--mm-text)', marginTop: '2px' }}>{medications.length} {lang === 'vi' ? 'loại' : 'meds'}</div>
+                      </div>
+                    </div>
+                    <button type="button" onClick={handleSignOut} className="mm-btn" style={{ width: '100%', marginTop: '22px', padding: '12px', fontSize: '14.5px', background: '#FDF1EF', color: '#C0574E', border: '1px solid #F0D6D2' }}>
+                      <span className="ms" style={{ fontSize: '19px' }}>logout</span>{lang === 'vi' ? 'Đăng xuất' : 'Sign out'}
+                    </button>
+                  </div>
 
-          {/* Admin view user medication schedule modal */}
-          {selectedAdminUser && (
-            <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-              <div className={`w-full max-w-lg border rounded-2xl p-6 shadow-2xl relative max-h-[85vh] flex flex-col transition-all ${
-                isLightMode ? 'bg-white border-slate-200 text-slate-800' : 'bg-slate-900 border-slate-800 text-slate-100'
-              }`}>
-                
-                <button
-                  onClick={() => setSelectedAdminUser(null)}
-                  className={`absolute top-4 right-4 cursor-pointer transition-colors ${
-                    isLightMode ? 'text-slate-400 hover:text-slate-600' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <X className="w-5 h-5" />
-                </button>
-
-                <h3 className={`text-lg font-bold mb-2 flex items-center gap-2 border-b pb-3 ${
-                  isLightMode ? 'border-slate-100 text-slate-900' : 'border-slate-800 text-slate-100'
-                }`}>
-                  <FileText className="w-5 h-5 text-indigo-500" />
-                  <span>{lang === 'vi' ? 'Chi tiết lịch thuốc' : 'Patient Medication Schedule'}</span>
-                </h3>
-
-                <p className={`text-xs mb-4 font-bold ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                  {lang === 'vi' ? `Tài khoản: ${selectedAdminUser.email}` : `Account: ${selectedAdminUser.email}`}
-                </p>
-
-                <div className="flex-1 overflow-y-auto space-y-4 pr-1">
-                  {selectedAdminUser.medications && selectedAdminUser.medications.length > 0 ? (
-                    selectedAdminUser.medications.map((med: any) => (
-                      <div key={med.id || med.name} className={`p-4 border rounded-xl space-y-1.5 transition-all ${
-                        isLightMode ? 'bg-slate-50 border-slate-200/60' : 'bg-slate-950/40 border-slate-800'
-                      }`}>
-                        <div className="flex items-start justify-between">
-                          <h4 className={`font-bold ${isLightMode ? 'text-slate-800' : 'text-slate-200'}`}>{med.name}</h4>
-                          <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-500 rounded-md text-[10px] font-bold border border-indigo-500/20">
-                            {med.dosage}
-                          </span>
-                        </div>
-                        <div className={`text-xs flex flex-wrap gap-x-4 gap-y-1 font-bold ${isLightMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                          <span>⏱️ {med.frequency}</span>
-                          <span>📦 {lang === 'vi' ? `Còn lại: ${med.remaining_stock ?? med.total_stock ?? 'N/A'}` : `Remaining: ${med.remaining_stock ?? med.total_stock ?? 'N/A'}`}</span>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5 pt-1">
-                          {med.schedule && med.schedule.map((time: string) => (
-                            <span key={time} className={`px-2 py-0.5 border rounded-md text-[10px] font-bold ${
-                              isLightMode ? 'bg-slate-100 border-slate-200 text-slate-600' : 'bg-slate-900 border-slate-800 text-slate-300'
-                            }`}>
-                              🕒 {time}
-                            </span>
+                  {/* Right settings */}
+                  <div style={{ flex: 1, minWidth: 0, width: '100%', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                    {/* Accessibility */}
+                    <div className="mm-card" style={{ padding: '22px 24px' }}>
+                      <div style={{ fontSize: '17px', fontWeight: 700, color: 'var(--mm-text)' }}>{lang === 'vi' ? 'Hiển thị & trợ năng' : 'Display & accessibility'}</div>
+                      <div style={{ fontSize: '13.5px', color: 'var(--mm-text-faint)', marginTop: '2px' }}>{lang === 'vi' ? 'Tùy chỉnh cho dễ nhìn.' : 'Adjust for easier reading.'}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginTop: '18px' }}>
+                        <span className="mm-icon-badge" style={{ width: '40px', height: '40px', borderRadius: '11px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', flexShrink: 0 }}><span className="ms" style={{ fontSize: '22px' }}>format_size</span></span>
+                        <div style={{ flex: 1, fontSize: '15px', fontWeight: 600, color: 'var(--mm-text)' }}>{lang === 'vi' ? 'Cỡ chữ' : 'Font size'}</div>
+                        <div className="mm-seg" style={{ padding: '4px' }}>
+                          {(['sm', 'md', 'lg'] as const).map((s) => (
+                            <button key={s} type="button" onClick={() => setFontScale(s)} className={`mm-seg-item${fontScale === s ? ' active' : ''}`} style={{ padding: '7px 14px', fontSize: s === 'sm' ? '13px' : s === 'md' ? '15px' : '17px' }}>A</button>
                           ))}
                         </div>
                       </div>
-                    ))
-                  ) : (
-                    <p className="text-sm text-slate-500 text-center py-6">
-                      {lang === 'vi' ? 'Không có thuốc nào được đăng ký.' : 'No medications registered.'}
-                    </p>
-                  )}
-                </div>
+                    </div>
 
-                <div className={`pt-4 border-t mt-4 flex justify-end ${isLightMode ? 'border-slate-100' : 'border-slate-800'}`}>
-                  <button
-                    onClick={() => setSelectedAdminUser(null)}
-                    className={`px-4 py-2 border rounded-xl text-xs font-semibold cursor-pointer transition-colors ${
-                      isLightMode ? 'bg-slate-100 border-slate-200 hover:bg-slate-200 text-slate-700' : 'bg-slate-900 border-slate-800 hover:bg-slate-800 text-slate-300'
-                    }`}
-                  >
-                    {lang === 'vi' ? 'Đóng' : 'Close'}
-                  </button>
+                    {/* Reminders */}
+                    <div className="mm-card" style={{ padding: '22px 24px' }}>
+                      <div style={{ fontSize: '17px', fontWeight: 700, color: 'var(--mm-text)', marginBottom: '4px' }}>{lang === 'vi' ? 'Lời nhắc' : 'Reminders'}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginTop: '14px' }}>
+                        <span className="mm-icon-badge" style={{ width: '40px', height: '40px', borderRadius: '11px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', flexShrink: 0 }}><span className="ms" style={{ fontSize: '21px' }}>notifications</span></span>
+                        <div style={{ flex: 1, fontSize: '15px', fontWeight: 600, color: 'var(--mm-text)' }}>{lang === 'vi' ? 'Nhắc đẩy (push)' : 'Push reminders'}</div>
+                        <MMToggle on={pushReminders} onClick={togglePushReminders} />
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginTop: '14px' }}>
+                        <span className="mm-icon-badge" style={{ width: '40px', height: '40px', borderRadius: '11px', background: 'var(--mm-surface-3)', color: 'var(--mm-text-faint)', flexShrink: 0 }}><span className="ms" style={{ fontSize: '21px' }}>mail</span></span>
+                        <div style={{ flex: 1, fontSize: '15px', fontWeight: 600, color: 'var(--mm-text)' }}>{lang === 'vi' ? 'Nhắc qua email' : 'Email reminders'}</div>
+                        <MMToggle on={emailReminders} onClick={() => setEmailReminders((v) => !v)} />
+                      </div>
+                    </div>
+
+                    {/* Emergency contact */}
+                    <div className="mm-card" style={{ padding: '22px 24px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                        <div style={{ fontSize: '17px', fontWeight: 700, color: 'var(--mm-text)' }}>{lang === 'vi' ? 'Người thân nhận thông báo' : 'Emergency contact'}</div>
+                        <button type="button" onClick={() => { setShowProfile(false); setShowCaregiverModal(true) }} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', border: 'none', background: 'transparent', color: 'var(--mm-primary)', fontWeight: 600, fontSize: '13.5px', cursor: 'pointer', fontFamily: 'inherit' }}><span className="ms" style={{ fontSize: '18px' }}>edit</span>{lang === 'vi' ? 'Chỉnh sửa' : 'Edit'}</button>
+                      </div>
+                      <div style={{ fontSize: '13.5px', color: 'var(--mm-text-faint)', marginTop: '2px' }}>{lang === 'vi' ? 'Được báo khi bạn bỏ lỡ nhiều liều liên tiếp.' : 'Notified when you miss several doses in a row.'}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '14px', background: 'var(--mm-surface-2)', border: '1px solid var(--mm-border-warm)', borderRadius: '13px', padding: '13px 15px' }}>
+                        <span className="mm-icon-badge" style={{ width: '42px', height: '42px', borderRadius: '50%', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary-dark)', fontWeight: 700, fontSize: '14px', flexShrink: 0, textTransform: 'uppercase' }}>{(caregiverName || '?').slice(0, 2)}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--mm-text)' }}>{caregiverName || (lang === 'vi' ? 'Chưa thiết lập' : 'Not set')}</div>
+                          <div style={{ fontSize: '13px', color: 'var(--mm-text-faint)', wordBreak: 'break-all' }}>{caregiverEmail}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           )}
+
+          {/* Manual Add Medication Modal */}
+          {/* Add Medication Modal */}
+          <AddMedicationModal lang={lang} showAddModal={showAddModal} setShowAddModal={setShowAddModal} handleManualAddMedication={handleManualAddMedication} newMedName={newMedName} setNewMedName={setNewMedName} newMedDosage={newMedDosage} setNewMedDosage={setNewMedDosage} newMedFreq={newMedFreq} setNewMedFreq={setNewMedFreq} newMedTime={newMedTime} setNewMedTime={setNewMedTime} newMedStock={newMedStock} setNewMedStock={setNewMedStock} newMedDosageQty={newMedDosageQty} setNewMedDosageQty={setNewMedDosageQty} newMedPrescriptionName={newMedPrescriptionName} setNewMedPrescriptionName={setNewMedPrescriptionName} />
+
+          {/* Edit Medication Modal */}
+          <EditMedicationModal lang={lang} showEditModal={showEditModal} editingMedication={editingMedication} setShowEditModal={setShowEditModal} setEditingMedication={setEditingMedication} handleSaveEditMedication={handleSaveEditMedication} editMedName={editMedName} setEditMedName={setEditMedName} editMedPrescriptionName={editMedPrescriptionName} setEditMedPrescriptionName={setEditMedPrescriptionName} editMedDosage={editMedDosage} setEditMedDosage={setEditMedDosage} editMedTime={editMedTime} setEditMedTime={setEditMedTime} editMedFreq={editMedFreq} setEditMedFreq={setEditMedFreq} editMedDosageQty={editMedDosageQty} setEditMedDosageQty={setEditMedDosageQty} editMedStock={editMedStock} setEditMedStock={setEditMedStock} editMedRemainingStock={editMedRemainingStock} setEditMedRemainingStock={setEditMedRemainingStock} />
+
+          {/* Caregiver Settings Modal */}
+          <CaregiverModal lang={lang} showCaregiverModal={showCaregiverModal} setShowCaregiverModal={setShowCaregiverModal} handleSaveCaregiverSettings={handleSaveCaregiverSettings} caregiverName={caregiverName} setCaregiverName={setCaregiverName} caregiverEmail={caregiverEmail} setCaregiverEmail={setCaregiverEmail} />
+
+          {/* Admin view user medication schedule modal */}
+          <PrescriptionReviewModal lang={lang} meds={prescriptionReview} onClose={() => setPrescriptionReview(null)} onEdit={(m) => { setPrescriptionReview(null); handleEditMedicationClick(m) }} />
+
+          <PatientDetailModal lang={lang} selectedAdminUser={selectedAdminUser} setSelectedAdminUser={setSelectedAdminUser} handleDeleteUser={handleDeleteUser} />
+
+          <AddUserModal lang={lang} showAddUserModal={showAddUserModal} setShowAddUserModal={setShowAddUserModal} handleCreateUser={handleCreateUser} newUserEmail={newUserEmail} setNewUserEmail={setNewUserEmail} newUserPassword={newUserPassword} setNewUserPassword={setNewUserPassword} newUserName={newUserName} setNewUserName={setNewUserName} creatingUser={creatingUser} />
 
         </div>
       )}

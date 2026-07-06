@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { getMedications, addMedication, deleteMedication, updateMedication } from '@/services/medicationService'
+import { getMedications, addMedication, deleteMedication, updateMedication, isValidSchedule } from '@/services/medicationService'
 import { apiError } from '@/utils/apiError'
 
 export async function GET() {
@@ -33,6 +33,9 @@ export async function POST(request: Request) {
 
     if (!name || !dosage || !frequency || !schedule) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    }
+    if (!isValidSchedule(schedule)) {
+      return NextResponse.json({ error: 'Giờ uống không hợp lệ. Cần định dạng HH:MM (ví dụ: 08:00).' }, { status: 400 })
     }
 
     const saved = await addMedication({
@@ -97,17 +100,18 @@ export async function PUT(request: Request) {
     if (!id) {
       return NextResponse.json({ error: 'Missing medication id' }, { status: 400 })
     }
+    if (schedule !== undefined && !isValidSchedule(schedule)) {
+      return NextResponse.json({ error: 'Giờ uống không hợp lệ. Cần định dạng HH:MM (ví dụ: 08:00).' }, { status: 400 })
+    }
 
-    const updated = await updateMedication(id, {
-      name,
-      dosage,
-      frequency,
-      schedule,
-      total_stock,
-      remaining_stock,
-      dosage_quantity,
-      prescription_name,
-    })
+    // Only forward fields the client actually supplied, so a partial update can't
+    // null-out columns it never intended to touch.
+    const updates: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries({ name, dosage, frequency, schedule, total_stock, remaining_stock, dosage_quantity, prescription_name })) {
+      if (value !== undefined) updates[key] = value
+    }
+
+    const updated = await updateMedication(id, updates as Parameters<typeof updateMedication>[1])
 
     if (!updated) {
       return NextResponse.json({ error: 'Failed to update medication' }, { status: 500 })

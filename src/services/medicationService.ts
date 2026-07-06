@@ -1,5 +1,23 @@
 import { createClient } from '@/utils/supabase/server'
 
+// Parse and validate an "HH:MM" time string. Returns null for anything malformed
+// (e.g. "9am", "", "25:70") so a bad schedule entry is skipped instead of producing
+// an Invalid Date that throws on .toISOString().
+export function parseHHMM(timeStr: unknown): { hours: number; minutes: number } | null {
+  if (typeof timeStr !== 'string') return null
+  const m = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
+  if (!m) return null
+  const hours = Number(m[1])
+  const minutes = Number(m[2])
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null
+  return { hours, minutes }
+}
+
+// True when `schedule` is a non-empty array of valid HH:MM strings.
+export function isValidSchedule(schedule: unknown): schedule is string[] {
+  return Array.isArray(schedule) && schedule.length > 0 && schedule.every((t) => parseHHMM(t) !== null)
+}
+
 export interface Medication {
   id: string
   user_id: string
@@ -164,10 +182,11 @@ export async function generateDailyLogs(dateStr?: string): Promise<void> {
     // If no logs exist for this medication today, create them based on the schedule
     if (!existingMedIds.has(med.id)) {
       for (const timeStr of med.schedule) {
-        const [hours, minutes] = timeStr.split(':').map(Number)
+        const parsed = parseHHMM(timeStr)
+        if (!parsed) continue // skip malformed schedule entries
         const scheduledTime = new Date(targetDate)
-        scheduledTime.setHours(hours, minutes, 0, 0)
-        
+        scheduledTime.setHours(parsed.hours, parsed.minutes, 0, 0)
+
         newLogsToInsert.push({
           medication_id: med.id,
           scheduled_time: scheduledTime.toISOString(),
@@ -178,9 +197,12 @@ export async function generateDailyLogs(dateStr?: string): Promise<void> {
   }
 
   if (newLogsToInsert.length > 0) {
+    // Upsert with ignoreDuplicates so a concurrent generation (two page loads racing)
+    // can't create duplicate logs — the unique (medication_id, scheduled_time) index
+    // makes the second insert a no-op instead of a duplicate row.
     const { error: insertError } = await supabase
       .from('medication_logs')
-      .insert(newLogsToInsert)
+      .upsert(newLogsToInsert, { onConflict: 'medication_id,scheduled_time', ignoreDuplicates: true })
 
     if (insertError) {
       console.error('Error generating daily logs:', insertError)
@@ -195,9 +217,10 @@ async function generateDailyLogsForMedication(med: Medication): Promise<void> {
   const newLogsToInsert = []
 
   for (const timeStr of med.schedule) {
-    const [hours, minutes] = timeStr.split(':').map(Number)
+    const parsed = parseHHMM(timeStr)
+    if (!parsed) continue // skip malformed schedule entries
     const scheduledTime = new Date(targetDate)
-    scheduledTime.setHours(hours, minutes, 0, 0)
+    scheduledTime.setHours(parsed.hours, parsed.minutes, 0, 0)
 
     newLogsToInsert.push({
       medication_id: med.id,
@@ -209,7 +232,7 @@ async function generateDailyLogsForMedication(med: Medication): Promise<void> {
   if (newLogsToInsert.length > 0) {
     const { error } = await supabase
       .from('medication_logs')
-      .insert(newLogsToInsert)
+      .upsert(newLogsToInsert, { onConflict: 'medication_id,scheduled_time', ignoreDuplicates: true })
 
     if (error) {
       console.error('Error generating logs for new medication:', error)
@@ -275,11 +298,11 @@ export async function getComplianceStreak(): Promise<number> {
     return 0
   }
 
-  // Get all logs for this user for the last 30 days
+  // Look back up to ~13 months so long adherence streaks aren't silently capped.
   const end = new Date()
   end.setHours(23, 59, 59, 999)
   const start = new Date()
-  start.setDate(start.getDate() - 30)
+  start.setDate(start.getDate() - 400)
   start.setHours(0, 0, 0, 0)
 
   const { data: logs, error } = await supabase

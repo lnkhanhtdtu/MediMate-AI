@@ -118,3 +118,32 @@ CREATE TRIGGER on_medication_log_status_change
     AFTER INSERT OR UPDATE ON public.medication_logs
     FOR EACH ROW
     EXECUTE FUNCTION public.handle_medication_log_status_change();
+
+-- 7. Prevent duplicate daily logs (guards against a race where two concurrent
+-- page loads both generate today's logs for the same medication + time).
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_medication_logs_med_time
+    ON public.medication_logs (medication_id, scheduled_time);
+
+-- 8. Broadcasts: system-wide announcements sent by admins, visible to all users.
+CREATE TABLE IF NOT EXISTS public.broadcasts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    message TEXT NOT NULL,
+    title TEXT,
+    severity TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('info', 'warning', 'urgent')),
+    created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.broadcasts ENABLE ROW LEVEL SECURITY;
+
+-- Any authenticated user may READ broadcasts (to see the latest announcement banner).
+DROP POLICY IF EXISTS "broadcasts_select_authenticated" ON public.broadcasts;
+CREATE POLICY "broadcasts_select_authenticated"
+    ON public.broadcasts
+    FOR SELECT
+    TO authenticated
+    USING (true);
+
+-- No INSERT/UPDATE/DELETE policy for normal users: broadcasts are created only through
+-- the admin API using the service-role key (which bypasses RLS).
+CREATE INDEX IF NOT EXISTS broadcasts_created_at_idx ON public.broadcasts (created_at DESC);

@@ -1,20 +1,10 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "MediMate AI - Trợ lý Nhắc lịch & Kiểm tra Tương tác Thuốc thông minh",
-  description: "Trợ lý sức khỏe ứng dụng trí tuệ nhân tạo (AI) giúp nhắc lịch uống thuốc, theo dõi tiến độ tuân thủ và tự động kiểm tra tương tác thuốc an toàn y khoa qua dữ liệu openFDA.",
+  description:
+    "Trợ lý sức khỏe ứng dụng trí tuệ nhân tạo (AI) giúp nhắc lịch uống thuốc, theo dõi tiến độ tuân thủ và tự động kiểm tra tương tác thuốc an toàn y khoa qua dữ liệu openFDA.",
 };
 
 export default function RootLayout({
@@ -23,10 +13,29 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="vi"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
+    <html lang="vi" className="h-full antialiased">
+      <head>
+        {/*
+          Fonts loaded via <link> (not next/font) on purpose:
+          - Be Vietnam Pro + Material Symbols match the MediMate design system.
+          - Avoids next/font's build-time font fetch (which needs to spawn worker
+            threads and fails on low-memory Windows machines).
+        */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link
+          rel="preconnect"
+          href="https://fonts.gstatic.com"
+          crossOrigin="anonymous"
+        />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap"
+          rel="stylesheet"
+        />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
+          rel="stylesheet"
+        />
+      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

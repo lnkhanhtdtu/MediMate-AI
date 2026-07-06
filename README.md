@@ -13,7 +13,7 @@ Dự án này là bài tập lớn cuối khóa (Capstone Project) thuộc chư�
 3. **Quản lý Đơn Thuốc Bằng Hình Ảnh (OCR)**: Cho phép người dùng chụp ảnh đơn thuốc bằng camera hoặc tải ảnh lên. AI tự động trích xuất thông tin thuốc, liều lượng, tần suất và tự động lên lịch uống.
 4. **Theo dõi Tỷ lệ Tuân thủ (Adherence Streak)**: Tính toán chuỗi ngày tuân thủ thực tế của người dùng dựa trên tỷ lệ uống thuốc đúng hẹn đạt trên 80% mỗi ngày.
 5. **Phân hệ Quản trị Hệ thống (Admin Portal)**:
-   - Dành riêng cho tài khoản quản trị (email chứa `admin` hoặc `admin@medimate.ai`).
+   - Dành riêng cho tài khoản quản trị (được cấp quyền qua danh sách email `ADMIN_EMAILS` phía server, mặc định `admin@medimate.ai`).
    - Tổng quan thống kê toàn hệ thống: Số người dùng, tổng số thuốc, tỷ lệ tuân thủ điều trị chung.
    - Bảng phân tích chi tiết từng bệnh nhân: Chuỗi ngày tuân thủ, số lượng thuốc và nhật ký uống thuốc hôm nay.
    - Đục sâu xem chi tiết toàn bộ lịch thuốc đã đăng ký của từng bệnh nhân.
@@ -25,7 +25,7 @@ Dự án này là bài tập lớn cuối khóa (Capstone Project) thuộc chư�
 
 - **Frontend/Backend**: Next.js (App Router), React, TailwindCSS.
 - **Cơ sở dữ liệu**: Supabase (PostgreSQL) với RLS (Row Level Security) được thắt chặt.
-- **AI/LLM**: `@google/genai` (mô hình `gemini-3.1-flash-lite` phục vụ trích xuất NLU, OCR và tương tác hội thoại).
+- **AI/LLM**: `@google/genai` — mặc định dùng mô hình `gemini-2.5-flash` (có thể đổi qua biến môi trường `GEMINI_MODEL`) phục vụ trích xuất NLU, OCR và tương tác hội thoại.
 - **External API**: OpenFDA (U.S. Food and Drug Administration).
 
 ---
@@ -37,18 +37,23 @@ Dự án này là bài tập lớn cuối khóa (Capstone Project) thuộc chư�
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   ├── admin/      # API quản trị xem thông tin người dùng
-│   │   │   ├── chat/       # API xử lý hội thoại AI, OCR và lên lịch uống thuốc
-│   │   │   ├── logs/       # API truy xuất & cập nhật trạng thái uống thuốc
-│   │   │   ├── mcp/        # Endpoint công cụ JSON-RPC (theo mô hình MCP) tra cứu OpenFDA
+│   │   │   ├── admin/       # API quản trị: thống kê, danh sách bệnh nhân, tạo/xoá user
+│   │   │   ├── broadcast/   # API phát/đọc thông báo hệ thống
+│   │   │   ├── chat/        # API xử lý hội thoại AI, OCR và lên lịch uống thuốc
+│   │   │   ├── logs/        # API truy xuất & cập nhật trạng thái uống thuốc
+│   │   │   ├── mcp/         # Endpoint công cụ JSON-RPC (theo mô hình MCP) tra cứu OpenFDA
 │   │   │   ├── medications/ # API CRUD đơn thuốc của bệnh nhân
-│   │   │   └── stats/      # API tính chuỗi ngày tuân thủ (streak) thực tế
+│   │   │   ├── sos/         # API gửi cảnh báo cho người bảo hộ (Resend / mô phỏng)
+│   │   │   └── stats/       # API tính chuỗi ngày tuân thủ (streak) thực tế
+│   │   ├── admin,schedule,stats,chat/ # Route rút gọn, redirect về tab tương ứng ở trang chính
 │   │   ├── globals.css     # Định nghĩa CSS & thiết lập màu sắc giao diện
 │   │   ├── layout.tsx      # Layout chính (đã chuyển ngữ sang vi)
 │   │   └── page.tsx        # Dashboard chính và cửa sổ hội thoại với AI
+│   ├── components/         # UI dùng chung: Chrome (header/nav/auth), Modals, types
 │   ├── services/
 │   │   └── medicationService.ts # Các tác vụ CRUD dữ liệu thuốc & logic chuỗi tuân thủ
 │   └── utils/
+│       ├── apiError.ts     # Chuẩn hoá phản hồi lỗi API (ẩn chi tiết nhạy cảm)
 │       └── supabase/       # Khởi tạo Supabase Client (bảo vệ chống sập khi build static)
 ├── supabase/
 │   ├── migrations/         # Bộ migrations tạo bảng, phân quyền và trigger
@@ -70,9 +75,19 @@ SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key_here
 
 # Google Gemini API
 GEMINI_API_KEY=your_gemini_api_key_here
+# (Tùy chọn) Đổi mô hình Gemini nếu tài khoản của bạn có model khác:
+# GEMINI_MODEL=gemini-2.5-flash
+
+# Danh sách email admin (phân tách bằng dấu phẩy) được cấp quyền vào Admin Portal.
+ADMIN_EMAILS=admin@medimate.ai
+
+# (Tùy chọn) Gửi email cảnh báo cho người bảo hộ qua Resend. Nếu bỏ trống, cảnh báo SOS
+# chạy ở chế độ mô phỏng (không gửi email thật).
+# RESEND_API_KEY=your_resend_api_key_here
+# SOS_FROM_EMAIL=MediMate <onboarding@resend.dev>
 ```
 
-> 💡 **Lưu ý**: Khóa `SUPABASE_SERVICE_ROLE_KEY` là bắt buộc để sử dụng chức năng Quản trị (Admin) nhằm truy vấn danh sách người dùng qua API của Supabase Auth. Nếu thiếu khóa này, hệ thống sẽ tự động chuyển sang chế độ Demo dữ liệu Mock để xem trước giao diện quản trị.
+> 💡 **Lưu ý**: Khóa `SUPABASE_SERVICE_ROLE_KEY` là bắt buộc để sử dụng chức năng Quản trị (Admin) nhằm truy vấn danh sách người dùng qua API của Supabase Auth. Nếu thiếu khóa này, Admin Portal sẽ hiển thị trạng thái trống trung thực (không tạo dữ liệu giả) kèm hướng dẫn cấu hình. `ADMIN_EMAILS` quyết định tài khoản nào được vào Admin Portal (kiểm tra phía server, không thể giả mạo).
 
 ---
 
