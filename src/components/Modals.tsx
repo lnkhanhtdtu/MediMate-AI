@@ -312,62 +312,6 @@ export function EditMedicationModal({
 }
 
 /* ------------------------------------------------------------------ */
-/* Caregiver settings                                                  */
-/* ------------------------------------------------------------------ */
-interface CaregiverModalProps {
-  lang: Lang
-  showCaregiverModal: boolean
-  setShowCaregiverModal: (v: boolean) => void
-  handleSaveCaregiverSettings: () => void
-  caregiverName: string; setCaregiverName: (v: string) => void
-  caregiverEmail: string; setCaregiverEmail: (v: string) => void
-}
-
-export function CaregiverModal({
-  lang, showCaregiverModal, setShowCaregiverModal, handleSaveCaregiverSettings,
-  caregiverName, setCaregiverName, caregiverEmail, setCaregiverEmail,
-}: CaregiverModalProps) {
-  const close = () => setShowCaregiverModal(false)
-  useEscToClose(close)
-  const vi = lang === 'vi'
-  if (!showCaregiverModal) return null
-  return (
-    <div onClick={close} className="fixed inset-0 flex items-center justify-center p-4 z-50" style={backdropStyle}>
-      <div role="dialog" aria-modal="true" onClick={stop} className="mm-card relative w-full" style={{ maxWidth: '460px', borderRadius: '22px', padding: '24px', boxShadow: 'var(--mm-shadow)', maxHeight: '90vh', overflowY: 'auto' }}>
-        <button type="button" onClick={close} className="absolute cursor-pointer" style={{ top: '18px', right: '18px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', borderRadius: '10px', background: 'var(--mm-surface-2)', color: 'var(--mm-text-muted)', border: '1px solid var(--mm-border)' }} aria-label={vi ? 'Đóng' : 'Close'}>
-          <span className="ms" style={{ fontSize: '20px' }}>close</span>
-        </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px', paddingRight: '40px' }}>
-          <span className="mm-icon-badge" style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary-dark)' }}><span className="ms" style={{ fontSize: '22px' }}>notifications_active</span></span>
-          <h3 style={{ fontSize: '19px', fontWeight: 800, color: 'var(--mm-text)', margin: 0 }}>{vi ? 'Cấu Hình Người Bảo Hộ' : 'Configure Caregiver'}</h3>
-        </div>
-        <p style={{ fontSize: '13.5px', color: 'var(--mm-text-muted)', margin: '0 0 20px' }}>{vi ? 'Người thân sẽ được báo khi bạn bỏ lỡ liều thuốc.' : 'Your caregiver is alerted when you miss a dose.'}</p>
-        <div className="space-y-4">
-          <div>
-            <label className="mm-field-label">{vi ? 'Tên người bảo hộ' : 'Caregiver name'}</label>
-            <div className="mm-input-wrap">
-              <span className="ms" style={{ fontSize: '20px' }}>person</span>
-              <input type="text" value={caregiverName} onChange={(e) => setCaregiverName(e.target.value)} className="mm-input" placeholder={vi ? 'Ví dụ: Mẹ, Bố, Bác sĩ' : 'e.g. Mom, Dad, Doctor'} required />
-            </div>
-          </div>
-          <div>
-            <label className="mm-field-label">{vi ? 'Email nhận cảnh báo trễ thuốc' : 'Alert recipient email'}</label>
-            <div className="mm-input-wrap">
-              <span className="ms" style={{ fontSize: '20px' }}>mail</span>
-              <input type="email" value={caregiverEmail} onChange={(e) => setCaregiverEmail(e.target.value)} className="mm-input" placeholder="name@domain.com" required />
-            </div>
-          </div>
-          <button type="button" onClick={handleSaveCaregiverSettings} className="mm-btn mm-btn-primary" style={{ width: '100%', marginTop: '4px', minHeight: '48px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-            <span className="ms" style={{ fontSize: '20px' }}>save</span>
-            {vi ? 'Lưu Cấu Hình' : 'Save Configuration'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
 /* Admin: patient medication drill-down                                */
 /* ------------------------------------------------------------------ */
 interface PatientDetailModalProps {

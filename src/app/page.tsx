@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/utils/supabase/client'
-import { AddMedicationModal, EditMedicationModal, CaregiverModal, PatientDetailModal, AddUserModal, PrescriptionReviewModal } from '@/components/Modals'
+import { AddMedicationModal, EditMedicationModal, PatientDetailModal, AddUserModal, PrescriptionReviewModal } from '@/components/Modals'
 import { AuthScreen, AppHeader, BottomNav, ComingSoon, MMToggle } from '@/components/Chrome'
 import type { Tab } from '@/components/types'
 
@@ -50,11 +50,6 @@ const translations = {
     addFast: "Thêm Nhanh",
     noMedsRegistered: "Chưa đăng ký loại thuốc nào.",
     chatPrompt: "Hãy chat với MediMate AI ở khung bên phải hoặc chụp đơn thuốc để thêm thuốc!",
-    guardian: "Giám Hộ & Cảnh Báo Khẩn Cấp",
-    guardianName: "Người nhận cảnh báo:",
-    guardianEmail: "Email liên hệ:",
-    alertHistory: "Lịch sử gửi cảnh báo:",
-    setup: "Thiết lập",
     takeGroup: "Uống nhóm",
     skip: "Bỏ qua",
     taken: "Đã uống",
@@ -75,10 +70,6 @@ const translations = {
     demoSignIn: "Dùng Thử Tài Khoản Demo (Không Cần Đăng Ký)",
     customLabel: "Nhãn đơn tự đặt hoặc nhập mới",
     optional: "Tùy chọn",
-    guardianSetup: "Cấu Hình Người Bảo Hộ (Caregiver)",
-    guardianNameInput: "Tên người bảo hộ",
-    guardianEmailInput: "Email nhận cảnh báo trễ thuốc",
-    saveConfig: "Lưu Cấu Hình",
     weekly: "Hàng tuần",
     everyOtherDay: "Cách ngày",
     daily: "Hàng ngày",
@@ -98,20 +89,14 @@ const translations = {
     loginTitle: "Chào Mừng Đến Với MediMate AI",
     loginSub: "Trợ lý ảo thông minh nhắc lịch và phân tích tương tác thuốc bằng AI",
     authLogin: "Đăng Nhập",
-    authSignup: "Đăng Ký",
     emailLabel: "Địa chỉ Email",
     passLabel: "Mật khẩu",
     emailPlaceholder: "name@example.com",
     passPlaceholder: "Nhập mật khẩu",
-    noAccount: "Chưa có tài khoản? Đăng ký ngay",
-    haveAccount: "Đã có tài khoản? Đăng nhập",
     days: "ngày",
     capsules: "viên",
     or: "Hoặc",
     processing: "Đang xử lý...",
-    guardianAlert: "Cảnh báo khẩn",
-    guardianAlertSent: "Gửi thông báo đến",
-    dueToMissed: "do bạn bỏ qua/trễ giờ uống thuốc",
   },
   en: {
     title: "MediMate AI",
@@ -126,11 +111,6 @@ const translations = {
     addFast: "Quick Add",
     noMedsRegistered: "No medications registered.",
     chatPrompt: "Chat with MediMate AI on the right or upload a prescription to add medications!",
-    guardian: "Guardian & Emergency Warning",
-    guardianName: "Recipient Name:",
-    guardianEmail: "Contact Email:",
-    alertHistory: "Alert History:",
-    setup: "Configure",
     takeGroup: "Take Group",
     skip: "Skip",
     taken: "Taken",
@@ -151,10 +131,6 @@ const translations = {
     demoSignIn: "Try Demo Account (No Registration Required)",
     customLabel: "Custom label or enter new one",
     optional: "Optional",
-    guardianSetup: "Configure Guardian (Caregiver)",
-    guardianNameInput: "Guardian Name",
-    guardianEmailInput: "Alert Recipient Email",
-    saveConfig: "Save Configuration",
     weekly: "Weekly",
     everyOtherDay: "Every Other Day",
     daily: "Daily",
@@ -174,20 +150,14 @@ const translations = {
     loginTitle: "Welcome to MediMate AI",
     loginSub: "Intelligent virtual assistant for medication reminders and AI drug interaction checks",
     authLogin: "Log In",
-    authSignup: "Sign Up",
     emailLabel: "Email Address",
     passLabel: "Password",
     emailPlaceholder: "name@example.com",
     passPlaceholder: "Enter your password",
-    noAccount: "Don't have an account? Sign up",
-    haveAccount: "Already have an account? Log in",
     days: "days",
     capsules: "pills",
     or: "Or",
     processing: "Processing...",
-    guardianAlert: "Emergency Alert",
-    guardianAlertSent: "Alert sent to",
-    dueToMissed: "due to missing medication",
   }
 }
 
@@ -214,14 +184,13 @@ export default function Home() {
   const supabase = createClient()
 
   // State Variables
-  const [lang, setLang] = useState<'vi' | 'en'>('vi')
+  const [lang, setLang] = useState<'vi' | 'en'>('en')
   const t = translations[lang]
 
   const [user, setUser] = useState<any>(null)
   const isAdmin = user && user.email && (user.email.toLowerCase().includes('admin') || user.email === 'admin@medimate.ai')
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
-  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login')
   const [authLoading, setAuthLoading] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
 
@@ -266,10 +235,6 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard')
   const [isListening, setIsListening] = useState(false)
   const [selectedImage, setSelectedImage] = useState<{ data: string; mimeType: string } | null>(null)
-  const [caregiverEmail, setCaregiverEmail] = useState('')
-  const [caregiverName, setCaregiverName] = useState('')
-  const [showCaregiverModal, setShowCaregiverModal] = useState(false)
-  const [caregiverAlerts, setCaregiverAlerts] = useState<string[]>([])
   const [badges, setBadges] = useState<string[]>([])
 
   // Admin & Stats States
@@ -416,78 +381,6 @@ export default function Home() {
     })
   }, [medications, logs])
 
-  // Sends a caregiver alert via /api/sos. Returns { delivered, simulated }.
-  // Real email is sent when RESEND_API_KEY is configured server-side; otherwise it is a
-  // clearly-labelled simulation.
-  const sendSosAlert = async (detail: string) => {
-    try {
-      const res = await fetch('/api/sos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ caregiverName, caregiverEmail, detail }),
-      })
-      return await res.json()
-    } catch {
-      return { delivered: false, simulated: true }
-    }
-  }
-
-  // Caregiver alert trigger helper (auto escalation on missed dose)
-  const triggerCaregiverEscalation = async (medName: string, time: string) => {
-    const result = await sendSosAlert(`Bỏ lỡ/trễ liều ${medName} (lịch ${time}).`)
-    const tag = result?.delivered ? 'ĐÃ GỬI EMAIL' : 'MÔ PHỎNG'
-    const alertMsg = `📧 [${tag}] ${t.guardianAlertSent} ${caregiverName} (${caregiverEmail}) ${t.dueToMissed} ${medName} (lịch: ${time})!`
-    setCaregiverAlerts((prev) => [alertMsg, ...prev])
-  }
-
-  const handleTriggerSOSTest = async () => {
-    if (!caregiverEmail.trim()) {
-      alert(lang === 'vi' ? 'Vui lòng thiết lập người bảo hộ (tên + email) trước khi gửi cảnh báo.' : 'Please set a caregiver (name + email) before sending an alert.')
-      setShowCaregiverModal(true)
-      return
-    }
-    const timeStr = new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-    const result = await sendSosAlert('Kiểm tra tín hiệu khẩn cấp (SOS Test).')
-    const delivered = !!result?.delivered
-    const tag = delivered ? 'ĐÃ GỬI EMAIL' : 'MÔ PHỎNG'
-    const alertMsg = `🚨 [${tag} SOS] Tín hiệu khẩn cấp tới Người bảo hộ ${caregiverName} (${caregiverEmail}) lúc ${timeStr}.`
-    setCaregiverAlerts((prev) => [alertMsg, ...prev])
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: 'model',
-        content: delivered
-          ? `🚨 **Đã gửi email cảnh báo khẩn cấp** tới người bảo hộ **${caregiverName}** (${caregiverEmail}).`
-          : `🚨 **Mô phỏng cảnh báo khẩn cấp (SOS Demo)** — cấu hình \`RESEND_API_KEY\` để gửi email thật. Người bảo hộ: **${caregiverName}** (${caregiverEmail}).`,
-      },
-    ])
-  }
-
-  const handleSaveCaregiverSettings = () => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('medimate_caregiverName', caregiverName)
-      localStorage.setItem('medimate_caregiverEmail', caregiverEmail)
-    }
-    setShowCaregiverModal(false)
-  }
-
-  // Handle Mark as Missed log
-  const handleMarkAsMissed = async (logId: string, medName: string, timeStr: string) => {
-    try {
-      const res = await fetch('/api/logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ logId, status: 'missed' }),
-      })
-      if (res.ok) {
-        fetchTodayLogs()
-        triggerCaregiverEscalation(medName, timeStr)
-      }
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
   // Handle Refill stock
   const handleRefillStock = async (id: string, total: number) => {
     try {
@@ -544,25 +437,12 @@ export default function Home() {
   // Restore client settings from localStorage on startup
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      // 1. Restoring UI Preferences & Caregiver Details
+      // 1. Restoring UI Preferences
       const savedLang = localStorage.getItem('medimate_lang')
       if (savedLang === 'vi' || savedLang === 'en') setLang(savedLang)
 
       // Light-only theme (MediMate redesign): dark mode retired — always run light,
       // ignore any previously saved dark preference.
-
-      const savedCaregiverName = localStorage.getItem('medimate_caregiverName')
-      if (savedCaregiverName) setCaregiverName(savedCaregiverName)
-
-      const savedCaregiverEmail = localStorage.getItem('medimate_caregiverEmail')
-      if (savedCaregiverEmail) setCaregiverEmail(savedCaregiverEmail)
-
-      const savedCaregiverAlerts = localStorage.getItem('medimate_caregiverAlerts')
-      if (savedCaregiverAlerts) {
-        try {
-          setCaregiverAlerts(JSON.parse(savedCaregiverAlerts))
-        } catch (_) {}
-      }
 
       const savedPush = localStorage.getItem('medimate_pushReminders')
       if (savedPush !== null) setPushReminders(savedPush === 'true')
@@ -646,13 +526,6 @@ export default function Home() {
       localStorage.setItem('medimate_lang', lang)
     }
   }, [lang])
-
-  // Persist caregiver alerts to localStorage
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('medimate_caregiverAlerts', JSON.stringify(caregiverAlerts))
-    }
-  }, [caregiverAlerts])
 
 
 
@@ -987,10 +860,6 @@ export default function Home() {
       if (user?.email && (user.email.toLowerCase().includes('admin') || user.email === 'admin@medimate.ai')) {
         fetchAdminData(true)
       }
-      logsToMiss.forEach(log => {
-        const timeStr = new Date(log.scheduled_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-        triggerCaregiverEscalation(log.medication?.name || 'Thuốc', timeStr)
-      })
     } catch (e) {
       console.error(e)
     }
@@ -1003,23 +872,13 @@ export default function Home() {
     setAuthError(null)
 
     try {
-      if (authMode === 'login') {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: authEmail,
-          password: authPassword,
-        })
-        if (error) throw error
-      } else {
-        const { error } = await supabase.auth.signUp({
-          email: authEmail,
-          password: authPassword,
-        })
-        if (error) throw error
-        alert('Đăng ký thành công! Hãy kiểm tra email để xác nhận tài khoản (nếu cần) hoặc đăng nhập ngay.')
-        setAuthMode('login')
-      }
+      const { error } = await supabase.auth.signInWithPassword({
+        email: authEmail,
+        password: authPassword,
+      })
+      if (error) throw error
     } catch (err: any) {
-      setAuthError(err.message || 'Lỗi xác thực.')
+      setAuthError(err.message || 'Authentication error.')
     } finally {
       setAuthLoading(false)
     }
@@ -1230,7 +1089,7 @@ export default function Home() {
     <div className="flex flex-col h-screen overflow-hidden font-sans" style={{ background: 'var(--mm-bg)', color: 'var(--mm-text)' }}>
       {/* Auth Screen */}
       {!user ? (
-        <AuthScreen lang={lang} setLang={setLang} authMode={authMode} setAuthMode={setAuthMode} authEmail={authEmail} setAuthEmail={setAuthEmail} authPassword={authPassword} setAuthPassword={setAuthPassword} showAuthPassword={showAuthPassword} setShowAuthPassword={setShowAuthPassword} authError={authError} authLoading={authLoading} handleAuth={handleAuth} handleQuickSignIn={handleQuickSignIn} />
+        <AuthScreen lang={lang} setLang={setLang} authEmail={authEmail} setAuthEmail={setAuthEmail} authPassword={authPassword} setAuthPassword={setAuthPassword} showAuthPassword={showAuthPassword} setShowAuthPassword={setShowAuthPassword} authError={authError} authLoading={authLoading} handleAuth={handleAuth} handleQuickSignIn={handleQuickSignIn} />
       ) : (
         /* App Main Screen */
         <div className="flex flex-col flex-1 min-h-0 z-10">
@@ -1571,37 +1430,6 @@ export default function Home() {
                 )}
               </div>
 
-              {/* Caregiver card (full width) */}
-              <div className="mm-card" style={{ padding: '18px 20px', flexShrink: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span className="ms" style={{ fontSize: '20px', color: 'var(--mm-coral)' }}>notifications_active</span>
-                    <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--mm-text)' }}>{t.guardian}</div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <button type="button" onClick={handleTriggerSOSTest} className="mm-chip" style={{ background: 'rgba(225,101,90,0.1)', color: 'var(--mm-coral)', padding: '5px 10px', fontSize: '11.5px', cursor: 'pointer', border: '1px solid rgba(225,101,90,0.25)' }}>🚨 SOS (Demo)</button>
-                    <button type="button" onClick={() => setShowCaregiverModal(true)} style={{ fontSize: '12.5px', color: 'var(--mm-primary)', fontWeight: 700, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>{t.setup}</button>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 24px', fontSize: '13px' }}>
-                  <div style={{ display: 'flex', gap: '8px' }}><span style={{ color: 'var(--mm-text-muted)' }}>{t.guardianName}:</span><span style={{ fontWeight: 700, color: caregiverName ? 'var(--mm-text)' : 'var(--mm-text-faint)' }}>{caregiverName || (lang === 'vi' ? 'Chưa thiết lập' : 'Not set')}</span></div>
-                  <div style={{ display: 'flex', gap: '8px' }}><span style={{ color: 'var(--mm-text-muted)' }}>{t.guardianEmail}:</span><span style={{ fontWeight: 700, color: caregiverEmail ? 'var(--mm-text)' : 'var(--mm-text-faint)' }}>{caregiverEmail || '—'}</span></div>
-                </div>
-                {caregiverAlerts.length > 0 ? (
-                  <div style={{ marginTop: '14px', borderTop: '1px solid var(--mm-border-warm)', paddingTop: '12px' }}>
-                    <div style={{ fontSize: '10px', color: 'var(--mm-coral)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>{t.alertHistory}</div>
-                    <div style={{ maxHeight: '96px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {caregiverAlerts.map((alert, idx) => (
-                        <div key={idx} style={{ fontSize: '11px', border: '1px solid rgba(225,101,90,0.2)', background: 'rgba(225,101,90,0.06)', color: '#a23c33', padding: '8px', borderRadius: '10px', lineHeight: 1.45 }}>{alert}</div>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ marginTop: '14px', borderTop: '1px solid var(--mm-border-warm)', paddingTop: '12px', fontSize: '11.5px', color: 'var(--mm-text-faint)', fontStyle: 'italic' }}>
-                    {lang === 'vi' ? 'Chưa có cảnh báo nào. Đây là bản mô phỏng — bản production sẽ tự động gửi SOS/Email khi trễ lịch uống thuốc.' : 'No alerts yet. This is a simulation — production would auto-send SOS/Email on missed medication.'}
-                  </div>
-                )}
-              </div>
               </>)}
 
             </section>
@@ -2063,9 +1891,9 @@ export default function Home() {
                       ) : (
                         <div className="mm-card" style={{ padding: 0, overflow: 'hidden' }}>
                           <div style={{ overflowX: 'auto' }}>
-                            <div style={{ minWidth: '720px' }}>
+                            <div style={{ minWidth: '760px' }}>
                               {/* header */}
-                              <div style={{ display: 'grid', gridTemplateColumns: '200px repeat(7, 1fr)', background: 'var(--mm-surface-2)', borderBottom: '1px solid var(--mm-border-warm)' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: '240px repeat(7, 1fr)', background: 'var(--mm-surface-2)', borderBottom: '1px solid var(--mm-border-warm)' }}>
                                 <div style={{ padding: '14px 18px', fontSize: '13px', fontWeight: 700, color: 'var(--mm-text-faint)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{lang === 'vi' ? 'Thuốc' : 'Medication'}</div>
                                 {weekDates.map((d, i) => {
                                   const isToday = sameDay(d, todayMid)
@@ -2083,12 +1911,12 @@ export default function Home() {
                               </div>
                               {/* rows */}
                               {medications.map((med, ri) => (
-                                <div key={med.id} style={{ display: 'grid', gridTemplateColumns: '200px repeat(7, 1fr)', alignItems: 'center', borderBottom: ri === medications.length - 1 ? 'none' : '1px solid var(--mm-border-warm)' }}>
+                                <div key={med.id} style={{ display: 'grid', gridTemplateColumns: '240px repeat(7, 1fr)', alignItems: 'center', borderBottom: ri === medications.length - 1 ? 'none' : '1px solid var(--mm-border-warm)' }}>
                                   <div style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '11px', minWidth: 0 }}>
                                     <span className="mm-icon-badge" style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', flexShrink: 0 }}><span className="ms" style={{ fontSize: '20px' }}>medication</span></span>
                                     <div style={{ minWidth: 0 }}>
-                                      <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--mm-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{med.name}</div>
-                                      <div style={{ fontSize: '12.5px', color: 'var(--mm-text-faint)' }}>{(med.schedule || []).join(' · ') || '—'}</div>
+                                      <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--mm-text)', whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.3 }}>{med.name}</div>
+                                      <div style={{ fontSize: '12.5px', color: 'var(--mm-text-faint)', whiteSpace: 'normal', lineHeight: 1.35, marginTop: '2px' }}>{(med.schedule || []).join(' · ') || '—'}</div>
                                     </div>
                                   </div>
                                   {weekDates.map((d, i) => {
@@ -2315,21 +2143,6 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* Emergency contact */}
-                    <div className="mm-card" style={{ padding: '22px 24px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-                        <div style={{ fontSize: '17px', fontWeight: 700, color: 'var(--mm-text)' }}>{lang === 'vi' ? 'Người thân nhận thông báo' : 'Emergency contact'}</div>
-                        <button type="button" onClick={() => { setShowProfile(false); setShowCaregiverModal(true) }} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', border: 'none', background: 'transparent', color: 'var(--mm-primary)', fontWeight: 600, fontSize: '13.5px', cursor: 'pointer', fontFamily: 'inherit' }}><span className="ms" style={{ fontSize: '18px' }}>edit</span>{lang === 'vi' ? 'Chỉnh sửa' : 'Edit'}</button>
-                      </div>
-                      <div style={{ fontSize: '13.5px', color: 'var(--mm-text-faint)', marginTop: '2px' }}>{lang === 'vi' ? 'Được báo khi bạn bỏ lỡ nhiều liều liên tiếp.' : 'Notified when you miss several doses in a row.'}</div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '14px', background: 'var(--mm-surface-2)', border: '1px solid var(--mm-border-warm)', borderRadius: '13px', padding: '13px 15px' }}>
-                        <span className="mm-icon-badge" style={{ width: '42px', height: '42px', borderRadius: '50%', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary-dark)', fontWeight: 700, fontSize: '14px', flexShrink: 0, textTransform: 'uppercase' }}>{(caregiverName || '?').slice(0, 2)}</span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--mm-text)' }}>{caregiverName || (lang === 'vi' ? 'Chưa thiết lập' : 'Not set')}</div>
-                          <div style={{ fontSize: '13px', color: 'var(--mm-text-faint)', wordBreak: 'break-all' }}>{caregiverEmail}</div>
-                        </div>
-                      </div>
-                    </div>
                   </div>
                 </div>
               </div>
@@ -2342,9 +2155,6 @@ export default function Home() {
 
           {/* Edit Medication Modal */}
           <EditMedicationModal lang={lang} showEditModal={showEditModal} editingMedication={editingMedication} setShowEditModal={setShowEditModal} setEditingMedication={setEditingMedication} handleSaveEditMedication={handleSaveEditMedication} editMedName={editMedName} setEditMedName={setEditMedName} editMedPrescriptionName={editMedPrescriptionName} setEditMedPrescriptionName={setEditMedPrescriptionName} editMedDosage={editMedDosage} setEditMedDosage={setEditMedDosage} editMedTime={editMedTime} setEditMedTime={setEditMedTime} editMedFreq={editMedFreq} setEditMedFreq={setEditMedFreq} editMedDosageQty={editMedDosageQty} setEditMedDosageQty={setEditMedDosageQty} editMedStock={editMedStock} setEditMedStock={setEditMedStock} editMedRemainingStock={editMedRemainingStock} setEditMedRemainingStock={setEditMedRemainingStock} />
-
-          {/* Caregiver Settings Modal */}
-          <CaregiverModal lang={lang} showCaregiverModal={showCaregiverModal} setShowCaregiverModal={setShowCaregiverModal} handleSaveCaregiverSettings={handleSaveCaregiverSettings} caregiverName={caregiverName} setCaregiverName={setCaregiverName} caregiverEmail={caregiverEmail} setCaregiverEmail={setCaregiverEmail} />
 
           {/* Admin view user medication schedule modal */}
           <PrescriptionReviewModal lang={lang} meds={prescriptionReview} onClose={() => setPrescriptionReview(null)} onEdit={(m) => { setPrescriptionReview(null); handleEditMedicationClick(m) }} />

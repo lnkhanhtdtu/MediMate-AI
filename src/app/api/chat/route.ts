@@ -12,7 +12,7 @@ import { apiError } from '@/utils/apiError'
 // Gemini model id — overridable via env so a model rename can be fixed without a code
 // change/redeploy. Default is a widely-available stable model; override with GEMINI_MODEL
 // if your account has access to a newer/faster one (verify it resolves against @google/genai).
-const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash'
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? 'gemini-3.1-flash-lite'
 
 function safeParseJson<T>(text: string | undefined | null): T | null {
   if (!text) return null
@@ -387,12 +387,13 @@ Hãy trả về phản hữu JSON theo định dạng sau:
 
     // 6. Handle Action: LOG_TAKEN
     if (nluResult.action === 'LOG_TAKEN' && nluResult.log_details) {
-      const drugName = nluResult.log_details.medication_name.toLowerCase()
-      
-      // Find a pending scheduled log for today matching this medication name
+      const drugName = nluResult.log_details.medication_name.toLowerCase().trim()
+
+      // Exact (normalized) name match — a substring match would flag the wrong drug
+      // when two medications share overlapping names (e.g. "Aspirin" vs "Aspirin C").
       const pendingLog = todayLogs.find(
         (log) =>
-          log.medication?.name.toLowerCase().includes(drugName) &&
+          log.medication?.name.toLowerCase().trim() === drugName &&
           log.status === 'scheduled'
       )
 
@@ -412,7 +413,7 @@ Hãy trả về phản hữu JSON theo định dạng sau:
         // If not found in scheduled, check if already taken today
         const alreadyTaken = todayLogs.find(
           (log) =>
-            log.medication?.name.toLowerCase().includes(drugName) &&
+            log.medication?.name.toLowerCase().trim() === drugName &&
             log.status === 'taken'
         )
         if (alreadyTaken) {

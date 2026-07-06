@@ -1,58 +1,62 @@
-# 🏛️ Tài liệu Kiến trúc Hệ thống — MediMate AI
+# 🏛️ System Architecture — MediMate AI
 
-Tài liệu này mô tả chi tiết kiến trúc phần mềm, mô hình dữ liệu, các luồng nghiệp vụ cốt lõi (luồng chẩn đoán và kiểm tra tương tác thuốc) và cơ chế bảo mật thông tin y khoa của hệ thống MediMate AI.
+> 🇻🇳 Bản tiếng Việt: [architecture.vi.md](architecture.vi.md)
+
+This document describes the software architecture, data model, core business flows (the intake/interaction-checking flow and the adherence calculation), and the medical-data security mechanisms of MediMate AI.
 
 ---
 
-## 1. Tổng quan Kiến trúc
+## 1. Architecture Overview
 
-MediMate AI được thiết kế theo mô hình **Next.js App Router** kết hợp với kiến trúc **Bảo mật Cơ sở dữ liệu Phân tán (Supabase BaaS)**. Toàn bộ nghiệp vụ nghiệp vụ được đóng gói dưới dạng các Serverless API Routes được bảo vệ bởi lớp Supabase Auth Middleware.
+MediMate AI is built on the **Next.js App Router** combined with a **Backend-as-a-Service (Supabase) database security** model. All business logic is packaged as serverless API routes protected by the Supabase Auth middleware layer.
 
 ```mermaid
 graph TD
-    Client[Next.js Client UI] -->|1. Gửi tin nhắn / Ảnh OCR| ChatAPI[/api/chat]
-    Client -->|4. Cập nhật uống thuốc| LogsAPI[/api/logs]
-    ChatAPI -->|2. Tra cứu dữ liệu nhãn| MCP[/api/mcp]
-    MCP -->|Gọi API ngoài| OpenFDA[openFDA API]
-    ChatAPI -->|3. Phân tích tương tác| Gemini[Google Gemini 3.1 Flash-Lite]
-    ChatAPI -->|Lưu đơn thuốc| DB[(Supabase DB)]
-    LogsAPI -->|Ghi nhật ký uống| DB
+    Client[Next.js Client UI] -->|1. Send message / OCR image| ChatAPI[/api/chat/]
+    Client -->|4. Update dose taken| LogsAPI[/api/logs/]
+    ChatAPI -->|2. Look up label data| MCP[/api/mcp/]
+    MCP -->|External API call| OpenFDA[openFDA API]
+    ChatAPI -->|3. Analyze interactions| Gemini[Google Gemini 3.1 Flash-Lite]
+    ChatAPI -->|Save prescription| DB[(Supabase DB)]
+    LogsAPI -->|Write adherence log| DB
 ```
 
 ---
 
-## 2. Luồng Nghiệp vụ Trọng yếu
+## 2. Core Business Flows
 
-### A. Luồng Thêm Thuốc & Kiểm tra Tương tác (Intake & Safe Interaction Checker)
+### A. Add Medication & Interaction Check (Intake & Safe Interaction Checker)
 
-Khi người dùng gửi yêu cầu thêm thuốc mới (bằng văn bản chat hoặc ảnh đơn thuốc):
-1. **Intake Agent**: Gemini trích xuất thông tin thuốc (`name`, `dosage`, `frequency`, `schedule`, `total_stock`, `dosage_quantity`).
-2. **Retrieve Current Drugs**: Hệ thống tải danh sách các thuốc bệnh nhân đang uống từ Supabase.
-3. **MCP Query**: 
-   - Điểm cuối `/api/chat` gọi POST nội bộ tới điểm cuối MCP Server `/api/mcp`.
-   - MCP Server sử dụng `AbortSignal.timeout(8000)` để truy vấn thông tin tương tác từ API OpenFDA Hoa Kỳ.
+When a user submits a request to add a new medication (via chat text or a prescription photo):
+
+1. **Intake Agent**: Gemini extracts the medication fields (`name`, `dosage`, `frequency`, `schedule`, `total_stock`, `dosage_quantity`).
+2. **Retrieve Current Drugs**: The system loads the patient's currently-taken medications from Supabase.
+3. **MCP Query**:
+   - The `/api/chat` route makes an internal POST call to the MCP-style tool endpoint `/api/mcp`.
+   - That endpoint uses `AbortSignal.timeout(8000)` to query interaction data from the U.S. openFDA API.
 4. **Interaction Checker Agent**:
-   - Nhận báo cáo nhãn thô từ MCP.
-   - Sử dụng Gemini phân tích các cảnh báo tương tác chéo giữa thuốc mới sắp thêm và các thuốc cũ.
-   - Nếu phát hiện tương tác nguy cơ mức độ **High** hoặc **Medium**, hệ thống dừng quá trình và trả về phản hồi `WARNING_INTERACTION` kèm hướng dẫn tiếng Việt. Bệnh nhân có quyền hủy bỏ hoặc chấp nhận rủi ro để ghi lại lịch.
+   - Receives the raw label report from the tool endpoint.
+   - Uses Gemini to analyze cross-interaction warnings between the new medication and the existing ones.
+   - If a **High** or **Medium** risk interaction is detected, the system halts and returns a `WARNING_INTERACTION` response with guidance. The patient can cancel, or explicitly accept the risk to record the schedule.
 
-### B. Luồng Tính toán Chuỗi Tuân thủ (Adherence Streak Calculation)
+### B. Adherence Streak Calculation
 
-Tỷ lệ tuân thủ điều trị thực tế (Adherence Rate) được tính tự động qua API `/api/stats` và phương thức `getComplianceStreak()`:
-- Quét toàn bộ nhật ký uống thuốc trong vòng 30 ngày gần nhất.
-- Gom nhóm theo ngày (định dạng `YYYY-MM-DD`).
-- Một ngày được tính là **ĐẠT** nếu tỷ lệ lượt thuốc đã uống (trạng thái `taken`) trên tổng lượt thuốc phải uống trong ngày đó đạt từ **80% trở lên**.
-- Chuỗi ngày liên tục (streak) bắt đầu đếm lùi từ ngày hôm nay (hoặc hôm qua nếu hôm nay chưa đến giờ uống thuốc hoặc chưa uống đủ nhưng còn các lượt thuốc chờ trong ngày).
+The real adherence rate is computed automatically via the `/api/stats` route and the `getComplianceStreak()` method:
+
+- Scan all medication logs from the last 30 days.
+- Group them by day (`YYYY-MM-DD` format).
+- A day counts as **on track** when the ratio of doses actually taken (status `taken`) to the total doses scheduled that day is **≥ 80%**.
+- The streak counts backwards from today (or from yesterday if today's doses aren't due yet, or if the day still has pending doses that keep the day from being decided).
 
 ---
 
-## 3. Chính sách Bảo mật Dữ liệu Y khoa (HIPAA Compliance & Security)
+## 3. Medical-Data Security Policy (HIPAA-inspired)
 
-Để bảo đảm tính bảo mật của thông tin y khoa cá nhân, MediMate AI áp dụng các biện pháp sau:
+To protect personal health information, MediMate AI applies the following measures:
 
-1. **Row Level Security (RLS) ở mức Database**:
-   - Bảng `medications` chỉ cho phép người sở hữu (dựa trên `auth.uid() = user_id`) thao tác CRUD.
-   - Bảng `medication_logs` áp dụng chính sách RLS thắt chặt ở hành vi `INSERT`, ngăn chặn chéo việc gán log vào thuốc của người dùng khác:
+1. **Row Level Security (RLS) at the database level**:
+   - The `medications` table only allows CRUD by the owner (`auth.uid() = user_id`).
+   - The `medication_logs` table uses a tightened RLS `INSERT` policy that prevents cross-assigning a log to another user's medication:
      ```sql
      WITH CHECK (
          auth.uid() = user_id
@@ -62,24 +66,16 @@ Tỷ lệ tuân thủ điều trị thực tế (Adherence Rate) được tính 
          )
      )
      ```
-2. **Bảo vệ Điểm cuối MCP Server**:
-   - Endpoint `/api/mcp` yêu cầu xác thực người dùng thông qua Supabase Auth Session Cookie được truyền từ route `/api/chat`. Chặn hoàn toàn các truy cập ẩn danh ngoài hệ thống.
-3. **Chặn Rò rỉ Dữ liệu Nhạy cảm (No PHI Leak)**:
-   - Nghiêm cấm ghi dữ liệu y khoa của bệnh nhân ra console log của máy chủ (ví dụ: `console.log` dữ liệu đơn thuốc hoặc thông tin log uống thuốc).
+2. **Protecting the MCP tool endpoint**:
+   - `/api/mcp` requires an authenticated user via the Supabase Auth session cookie forwarded from `/api/chat`. Anonymous external access is fully blocked.
+3. **No PHI leakage**:
+   - Patient medical data is never written to server console logs (e.g. no `console.log` of prescription data or dose-log details).
 
 ---
 
-## 4. Phân hệ Quản trị (Admin Panel Layout & RBAC)
+## 4. Admin Panel Layout & RBAC
 
-Hệ thống phân quyền truy cập thông qua email người dùng (kiểm tra email chứa từ khóa `admin` hoặc có định dạng `admin@medimate.ai`).
-- **Admin API (`/api/admin/users`)**: Khởi tạo Supabase client sử dụng khóa `SUPABASE_SERVICE_ROLE_KEY` giúp bypass chính sách RLS để thu thập dữ liệu thống kê tổng thể toàn hệ thống và hiển thị danh sách người dùng kèm chuỗi ngày tuân thủ thực tế của họ.
-- **Mock Fallback**: Nếu hệ thống phát hiện không có biến môi trường `SUPABASE_SERVICE_ROLE_KEY` tại máy chủ cục bộ (preview mode), API sẽ trả về dữ liệu Mock chi tiết của 3 bệnh nhân ảo để người dùng trải nghiệm giao diện quản trị đầy đủ tính năng.
+Access control is based on an **email allowlist** configured via the `ADMIN_EMAILS` environment variable and checked entirely server-side (it cannot be spoofed from the client).
 
----
-
-## 5. Loại trừ Thư mục ADK & Workspace Customizations
-
-Để tránh gây nhiễu cho các tiến trình build và kiểm tra cú pháp (TypeScript linting, package bundling), hãy bảo đảm các thư mục cấu hình hỗ trợ lập trình sau đây được đưa vào danh sách loại trừ (exclude/ignore):
-- Thư mục cấu hình toàn cục `.gemini/`
-- Thư mục tùy biến dự án `.agents/`
-- Các tệp tin markdown tạm thời trong thư mục artifacts của AppData.
+- **Admin API (`/api/admin/users`)**: Instantiates a Supabase client with the `SUPABASE_SERVICE_ROLE_KEY` to bypass RLS, gather system-wide statistics, and list users along with their real adherence streaks.
+- **Honest empty state**: If the server has no `SUPABASE_SERVICE_ROLE_KEY`, the API returns an empty state with configuration guidance — it does **not** fabricate fake patient data, to avoid misleading reviewers.

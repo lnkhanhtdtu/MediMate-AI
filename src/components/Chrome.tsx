@@ -4,12 +4,10 @@ import React from 'react'
 import type { Lang, Tab } from './types'
 
 /* ------------------------------------------------------------------ */
-/* Auth screen (login / signup split panel)                           */
+/* Auth screen (login-only split panel)                               */
 /* ------------------------------------------------------------------ */
 interface AuthScreenProps {
   lang: Lang; setLang: (v: Lang) => void
-  authMode: 'login' | 'signup'
-  setAuthMode: (v: 'login' | 'signup') => void
   authEmail: string; setAuthEmail: (v: string) => void
   authPassword: string; setAuthPassword: (v: string) => void
   showAuthPassword: boolean; setShowAuthPassword: (fn: (v: boolean) => boolean) => void
@@ -20,7 +18,7 @@ interface AuthScreenProps {
 }
 
 export function AuthScreen({
-  lang, setLang, authMode, setAuthMode, authEmail, setAuthEmail, authPassword, setAuthPassword,
+  lang, setLang, authEmail, setAuthEmail, authPassword, setAuthPassword,
   showAuthPassword, setShowAuthPassword, authError, authLoading, handleAuth, handleQuickSignIn,
 }: AuthScreenProps) {
   const vi = lang === 'vi'
@@ -54,12 +52,8 @@ export function AuthScreen({
         </div>
         <div className="mm-auth-form" style={{ flex: 1, minWidth: 0, background: 'var(--mm-bg)', padding: '52px 60px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           <div style={{ maxWidth: '400px', width: '100%', margin: '0 auto' }}>
-            <div className="mm-seg" style={{ marginBottom: '28px' }}>
-              <button type="button" className={`mm-seg-item${authMode === 'login' ? ' active' : ''}`} onClick={() => setAuthMode('login')}>{vi ? 'Đăng nhập' : 'Log in'}</button>
-              <button type="button" className={`mm-seg-item${authMode === 'signup' ? ' active' : ''}`} onClick={() => setAuthMode('signup')}>{vi ? 'Đăng ký' : 'Sign up'}</button>
-            </div>
-            <div style={{ fontSize: '24px', fontWeight: 800 }}>{authMode === 'login' ? (vi ? 'Chào mừng trở lại' : 'Welcome back') : (vi ? 'Tạo tài khoản mới' : 'Create a new account')}</div>
-            <div style={{ fontSize: '15px', color: 'var(--mm-text-muted)', marginTop: '5px', marginBottom: '24px' }}>{authMode === 'login' ? (vi ? 'Đăng nhập để tiếp tục theo dõi lịch uống thuốc.' : 'Log in to keep tracking your medication schedule.') : (vi ? 'Tạo tài khoản để bắt đầu quản lý thuốc cùng AI.' : 'Create an account to start managing your meds with AI.')}</div>
+            <div style={{ fontSize: '24px', fontWeight: 800 }}>{vi ? 'Chào mừng trở lại' : 'Welcome back'}</div>
+            <div style={{ fontSize: '15px', color: 'var(--mm-text-muted)', marginTop: '5px', marginBottom: '24px' }}>{vi ? 'Đăng nhập để tiếp tục theo dõi lịch uống thuốc.' : 'Log in to keep tracking your medication schedule.'}</div>
             <form onSubmit={handleAuth}>
               <label className="mm-field-label">Email</label>
               <div className="mm-input-wrap" style={{ marginBottom: '16px' }}>
@@ -79,7 +73,7 @@ export function AuthScreen({
                 </div>
               )}
               <button type="submit" disabled={authLoading} className="mm-btn mm-btn-primary" style={{ width: '100%', fontSize: '16px', padding: '15px' }}>
-                {authLoading ? (vi ? 'Đang xử lý...' : 'Processing...') : authMode === 'login' ? (vi ? 'Đăng nhập' : 'Log in') : (vi ? 'Đăng ký' : 'Sign up')}
+                {authLoading ? (vi ? 'Đang xử lý...' : 'Processing...') : (vi ? 'Đăng nhập' : 'Log in')}
               </button>
             </form>
             <div style={{ display: 'flex', alignItems: 'center', gap: '14px', margin: '22px 0' }}>
@@ -180,7 +174,7 @@ interface ComingSoonProps {
   lang?: Lang
 }
 
-export function ComingSoon({ icon, title, desc, cta, onCta, showDevBadge = true, lang = 'vi' }: ComingSoonProps) {
+export function ComingSoon({ icon, title, desc, cta, onCta, showDevBadge = true, lang = 'en' }: ComingSoonProps) {
   return (
     <div className="mm-card" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '56px 32px', minHeight: '360px' }}>
       <span className="mm-icon-badge" style={{ width: '100px', height: '100px', borderRadius: '28px', background: 'var(--mm-primary-soft)', color: 'var(--mm-primary)', marginBottom: '22px' }}>

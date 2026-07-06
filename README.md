@@ -1,138 +1,184 @@
-# 📋 MediMate AI — Trợ lý Sức khỏe & Quản lý Nhắc lịch Uống thuốc thông minh
+# 📋 MediMate AI — Smart Medication Reminder & Personal Health Agent
 
-MediMate AI là một ứng dụng trợ lý y khoa cá nhân hóa (Personal Health Agent) tích hợp trí tuệ nhân tạo (AI) giúp nhắc lịch uống thuốc, theo dõi tiến độ tuân thủ điều trị (adherence) của bệnh nhân và tự động kiểm tra tương tác thuốc an toàn thông qua dữ liệu nhãn thuốc chính thức từ **openFDA**.
+> **🌐 Live demo:** **https://medimate-ai-five.vercel.app/**
+> **🏆 Kaggle Vibe Coding Capstone — Track: Concierge Agents**
+> **🇻🇳 Bản tiếng Việt:** [README.vi.md](README.vi.md)
 
-Dự án này là bài tập lớn cuối khóa (Capstone Project) thuộc chương trình **Kaggle Vibe Coding — track Concierge Agents**.
+![MediMate AI cover](public/cover_image.png)
 
----
+MediMate AI is a personal health agent that helps patients — especially the elderly and people managing chronic conditions — **remember their medications, track treatment adherence, and automatically screen for dangerous drug interactions** using official drug-label data from **openFDA**.
 
-## ✨ Tính Năng Nổi Bật
-
-1. **Trợ lý Sức khỏe AI Đa nhiệm**: Tương tác bằng ngôn ngữ tự nhiên thông qua giao diện chat tiếng Việt cực kỳ thân thiện.
-2. **Kiểm tra Tương Tác Thuốc (JSON-RPC theo mô hình MCP + OpenFDA)**: Một endpoint công cụ JSON-RPC 2.0 nội bộ (thiết kế theo mô hình Model Context Protocol – MCP: `tools/list`, `tools/call`) tự động tra cứu dữ liệu từ OpenFDA và cảnh báo tương tác chéo nguy hiểm trước khi thêm lịch uống thuốc mới.
-3. **Quản lý Đơn Thuốc Bằng Hình Ảnh (OCR)**: Cho phép người dùng chụp ảnh đơn thuốc bằng camera hoặc tải ảnh lên. AI tự động trích xuất thông tin thuốc, liều lượng, tần suất và tự động lên lịch uống.
-4. **Theo dõi Tỷ lệ Tuân thủ (Adherence Streak)**: Tính toán chuỗi ngày tuân thủ thực tế của người dùng dựa trên tỷ lệ uống thuốc đúng hẹn đạt trên 80% mỗi ngày.
-5. **Phân hệ Quản trị Hệ thống (Admin Portal)**:
-   - Dành riêng cho tài khoản quản trị (được cấp quyền qua danh sách email `ADMIN_EMAILS` phía server, mặc định `admin@medimate.ai`).
-   - Tổng quan thống kê toàn hệ thống: Số người dùng, tổng số thuốc, tỷ lệ tuân thủ điều trị chung.
-   - Bảng phân tích chi tiết từng bệnh nhân: Chuỗi ngày tuân thủ, số lượng thuốc và nhật ký uống thuốc hôm nay.
-   - Đục sâu xem chi tiết toàn bộ lịch thuốc đã đăng ký của từng bệnh nhân.
-   - Phát thông báo khẩn cấp hệ thống (System Broadcast).
+Users interact in natural Vietnamese (or English) through a chat interface, or simply **snap a photo of a prescription** — the agent reasons over the messy input, extracts structured medication data, checks it for cross-interactions against the drugs the patient is already taking, and only then schedules the doses.
 
 ---
 
-## 🛠️ Công Nghệ Sử Dụng
+## ✨ Key Features
 
-- **Frontend/Backend**: Next.js (App Router), React, TailwindCSS.
-- **Cơ sở dữ liệu**: Supabase (PostgreSQL) với RLS (Row Level Security) được thắt chặt.
-- **AI/LLM**: `@google/genai` — mặc định dùng mô hình `gemini-2.5-flash` (có thể đổi qua biến môi trường `GEMINI_MODEL`) phục vụ trích xuất NLU, OCR và tương tác hội thoại.
-- **External API**: OpenFDA (U.S. Food and Drug Administration).
+| # | Feature | Description |
+|---|---------|-------------|
+| 1 | **Conversational Health Agent** | Natural-language chat (Vietnamese/English). The agent reasons over unstructured input and proactively asks follow-up questions when critical info (dosage, timing) is missing before saving anything. |
+| 2 | **Drug-Interaction Screening (MCP-style JSON-RPC + openFDA)** | An internal JSON-RPC 2.0 tool endpoint (designed after the Model Context Protocol — `tools/list`, `tools/call`) queries openFDA and warns about dangerous cross-interactions **before** a new medication is scheduled. |
+| 3 | **Prescription OCR** | Snap or upload a photo of a prescription; the agent extracts drug name, dosage, frequency and schedule, then auto-creates the reminders. |
+| 4 | **Adherence Streak Tracking** | Computes the patient's real adherence streak — a day counts as "on track" only when ≥80% of that day's scheduled doses were actually taken. |
+| 5 | **Admin Portal** | System-wide stats (users, total medications, overall adherence), per-patient drill-down, and an emergency **System Broadcast**. Access is gated server-side by an `ADMIN_EMAILS` allowlist. |
 
 ---
 
-## 📁 Cấu Trúc Dự Án
+## 🏛️ Architecture
+
+MediMate AI follows a **fail-safe agentic pipeline**: the intake agent extracts data, a tool endpoint fetches external drug labels, an interaction checker reasons over them, and a **gate** blocks the database write when an unverified/high-risk interaction is detected.
+
+```mermaid
+graph TD
+    Client[Next.js Client UI] -->|1. Chat message / prescription photo| ChatAPI[/api/chat — Intake Agent/]
+    Client -->|Mark dose taken| LogsAPI[/api/logs/]
+    ChatAPI -->|2. Look up drug labels| MCP[/api/mcp — JSON-RPC tool/]
+    MCP -->|External call| OpenFDA[openFDA API]
+    ChatAPI -->|3. Reason over interactions| Gemini[Google Gemini 3.1 Flash-Lite]
+    ChatAPI -->|4. Gate: write only if safe| DB[(Supabase PostgreSQL + RLS)]
+    LogsAPI -->|Write adherence log| DB
+    AdminAPI[/api/admin/users/] -->|Service role, RLS bypass| DB
+```
+
+See [architecture.md](architecture.md) for the full data model, adherence-streak algorithm, and security design (Vietnamese: [architecture.vi.md](architecture.vi.md)).
+
+### Course concepts demonstrated
+
+| Concept | Where |
+|---------|-------|
+| **Agentic pipeline** (Intake Agent → tool → Interaction Checker → safe-write gate) | `src/app/api/chat/route.ts` |
+| **MCP-style tool server** (JSON-RPC 2.0 `tools/list` / `tools/call` over openFDA) | `src/app/api/mcp/route.ts` |
+| **Security features** (auth on every route, tightened RLS, DoS limits, no PHI in logs, fail-safe write gate) | `src/app/api/**`, `supabase/migrations/` |
+| **Deployability** | Live on Vercel — https://medimate-ai-five.vercel.app/ |
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend / Backend | Next.js 16 (App Router), React 19, TailwindCSS v4 |
+| Database | Supabase (PostgreSQL) with tightened Row Level Security |
+| AI / LLM | `@google/genai` — default model `gemini-3.1-flash-lite` (override via `GEMINI_MODEL`) for NLU extraction, OCR and conversation |
+| External API | openFDA (U.S. Food and Drug Administration) |
+| Hosting | Vercel |
+
+---
+
+## 📁 Project Structure
 
 ```
-├── public/                 # Ảnh, biểu tượng ứng dụng
+├── public/                 # App images & icons (incl. cover_image.png)
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   ├── admin/       # API quản trị: thống kê, danh sách bệnh nhân, tạo/xoá user
-│   │   │   ├── broadcast/   # API phát/đọc thông báo hệ thống
-│   │   │   ├── chat/        # API xử lý hội thoại AI, OCR và lên lịch uống thuốc
-│   │   │   ├── logs/        # API truy xuất & cập nhật trạng thái uống thuốc
-│   │   │   ├── mcp/         # Endpoint công cụ JSON-RPC (theo mô hình MCP) tra cứu OpenFDA
-│   │   │   ├── medications/ # API CRUD đơn thuốc của bệnh nhân
-│   │   │   ├── sos/         # API gửi cảnh báo cho người bảo hộ (Resend / mô phỏng)
-│   │   │   └── stats/       # API tính chuỗi ngày tuân thủ (streak) thực tế
-│   │   ├── admin,schedule,stats,chat/ # Route rút gọn, redirect về tab tương ứng ở trang chính
-│   │   ├── globals.css     # Định nghĩa CSS & thiết lập màu sắc giao diện
-│   │   ├── layout.tsx      # Layout chính (đã chuyển ngữ sang vi)
-│   │   └── page.tsx        # Dashboard chính và cửa sổ hội thoại với AI
-│   ├── components/         # UI dùng chung: Chrome (header/nav/auth), Modals, types
+│   │   │   ├── admin/       # Admin: stats, patient directory, user create/delete
+│   │   │   ├── broadcast/   # System broadcast publish/read
+│   │   │   ├── chat/        # Conversational agent, OCR, scheduling (intake + gate)
+│   │   │   ├── logs/        # Read/update dose-taken status
+│   │   │   ├── mcp/         # JSON-RPC tool endpoint (MCP-style) → openFDA
+│   │   │   ├── medications/ # Patient medication CRUD
+│   │   │   └── stats/       # Adherence-streak computation
+│   │   ├── globals.css      # Theme & color tokens
+│   │   ├── layout.tsx       # Root layout
+│   │   └── page.tsx         # Main dashboard + AI chat window
+│   ├── components/          # Shared UI: Chrome (header/nav/auth), Modals, types
 │   ├── services/
-│   │   └── medicationService.ts # Các tác vụ CRUD dữ liệu thuốc & logic chuỗi tuân thủ
+│   │   └── medicationService.ts # Medication CRUD + adherence-streak logic
 │   └── utils/
-│       ├── apiError.ts     # Chuẩn hoá phản hồi lỗi API (ẩn chi tiết nhạy cảm)
-│       └── supabase/       # Khởi tạo Supabase Client (bảo vệ chống sập khi build static)
+│       ├── apiError.ts      # Standardized error responses (hide sensitive detail)
+│       └── supabase/        # Supabase client factories (build-safe)
 ├── supabase/
-│   ├── migrations/         # Bộ migrations tạo bảng, phân quyền và trigger
-│   └── schema.sql          # Lược đồ database hoàn chỉnh của hệ thống
-└── .env.example            # Biểu mẫu cấu hình biến môi trường
+│   ├── migrations/          # Tables, RLS policies, triggers (00 → 07)
+│   └── schema.sql           # Full consolidated schema
+└── .env.example             # Environment variable template
 ```
 
 ---
 
-## ⚙️ Cấu Hình Biến Môi Trường
+## ⚙️ Environment Variables
 
-Tạo file `.env.local` ở thư mục gốc và nhập các khóa cấu hình sau:
+Create a `.env.local` in the project root:
 
 ```env
-# Supabase Configuration
+# Supabase
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url_here
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key_here
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key_here
 
-# Google Gemini API
+# Google Gemini
 GEMINI_API_KEY=your_gemini_api_key_here
-# (Tùy chọn) Đổi mô hình Gemini nếu tài khoản của bạn có model khác:
-# GEMINI_MODEL=gemini-2.5-flash
+# Optional: override the model in one place (verify it exists in your account).
+# GEMINI_MODEL=gemini-3.1-flash-lite
 
-# Danh sách email admin (phân tách bằng dấu phẩy) được cấp quyền vào Admin Portal.
+# Admin allowlist — comma-separated emails granted Admin Portal access (server-side, not spoofable).
 ADMIN_EMAILS=admin@medimate.ai
-
-# (Tùy chọn) Gửi email cảnh báo cho người bảo hộ qua Resend. Nếu bỏ trống, cảnh báo SOS
-# chạy ở chế độ mô phỏng (không gửi email thật).
-# RESEND_API_KEY=your_resend_api_key_here
-# SOS_FROM_EMAIL=MediMate <onboarding@resend.dev>
 ```
 
-> 💡 **Lưu ý**: Khóa `SUPABASE_SERVICE_ROLE_KEY` là bắt buộc để sử dụng chức năng Quản trị (Admin) nhằm truy vấn danh sách người dùng qua API của Supabase Auth. Nếu thiếu khóa này, Admin Portal sẽ hiển thị trạng thái trống trung thực (không tạo dữ liệu giả) kèm hướng dẫn cấu hình. `ADMIN_EMAILS` quyết định tài khoản nào được vào Admin Portal (kiểm tra phía server, không thể giả mạo).
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | Client & server Supabase access |
+| `SUPABASE_SERVICE_ROLE_KEY` | ✅ (for Admin) | Admin stats, patient directory, user CRUD, broadcast. Without it the Admin Portal shows an honest empty state (no fake data). |
+| `GEMINI_API_KEY` | ✅ | Gemini access for NLU/OCR/chat |
+| `GEMINI_MODEL` | ⬜ | Override the default `gemini-3.1-flash-lite` |
+| `ADMIN_EMAILS` | ✅ (for Admin) | Server-side allowlist deciding who reaches the Admin Portal (cannot be spoofed) |
 
 ---
 
-## 🚀 Hướng Dẫn Cài Đặt & Chạy Thử
+## 🚀 Setup & Run
 
-### 1. Cài đặt dependencies
+### 1. Install dependencies
 ```bash
 npm install
 ```
+> Node **≥ 22** is recommended (the Supabase v2.110 SDK targets Node 22). On Vercel, set Project → Settings → **Node.js version to 22.x**.
 
-### 2. Thiết lập cơ sở dữ liệu
-Chạy các tệp tin SQL trong thư mục `supabase/migrations` (theo thứ tự từ `00` đến `05`) hoặc chạy file `supabase/schema.sql` trực tiếp trong trình soạn thảo SQL của Supabase Dashboard.
+### 2. Set up the database
+In the Supabase Dashboard SQL editor, either run the migrations in `supabase/migrations/` **in order (`00` → `07`)**, or run the consolidated `supabase/schema.sql` directly.
 
-### 3. Khởi chạy dự án ở chế độ phát triển
+### 3. Run in development
 ```bash
 npm run dev
 ```
-Mở trình duyệt truy cập vào [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000).
 
-### 4. Build sản phẩm (Production)
+### 4. Production build
 ```bash
 npm run build
 ```
 
----
-
-## 👥 Tài Khoản Demo Khảo Sát (1-Click Login)
-
-Để thuận tiện cho việc chạy thử và đánh giá dự án mà không cần đăng ký tài khoản mới, hệ thống đã cài đặt sẵn 2 tài khoản demo trên cơ sở dữ liệu. Bạn có thể nhấn nút **Đăng Nhập Admin** hoặc **Đăng Nhập User** ở màn hình đăng nhập để tự động điền thông tin:
-
-*   **Tài khoản Quản trị (Admin Account)**:
-    *   **Email**: `admin@medimate.ai`
-    *   **Mật khẩu**: `admin123456`
-    *   *Tính năng*: Được cấp quyền truy cập **Tab Quản trị (Admin Portal)** để xem chỉ số toàn hệ thống, danh sách bệnh nhân và phát thông báo khẩn cấp.
-*   **Tài khoản Bệnh nhân (Standard User)**:
-    *   **Email**: `user@medimate.ai`
-    *   **Mật khẩu**: `user123456`
-    *   *Tính năng*: Quản lý thuốc cá nhân, đặt lịch, tương tác với AI Agent hỗ trợ phân tích đơn thuốc qua ảnh (OCR).
+### 5. Deploy to Vercel
+Import the GitHub repo into Vercel, set all environment variables above, set the Node.js version to **22.x**, and deploy. Live instance: **https://medimate-ai-five.vercel.app/**
 
 ---
 
-## 🔒 Kiểm Soát Bảo Mật & RLS
+## 👥 Demo Accounts (1-Click Login)
 
-Hệ thống áp dụng các nguyên tắc bảo mật dữ liệu y khoa lấy cảm hứng từ HIPAA (HIPAA-inspired safeguards):
-- Mọi API route phục vụ người dùng đều yêu cầu xác thực phiên đăng nhập bằng JWT cookies thông qua Supabase.
-- RLS của bảng `medication_logs` được thắt chặt qua chính sách kiểm tra quyền sở hữu đối với cả `user_id` của bản ghi log lẫn `user_id` của tệp tin thuốc (`medication_id`) được tham chiếu tới, ngăn chặn tuyệt đối việc ghi đè log chéo giữa các tài khoản.
-- Không ghi nhận dữ liệu y khoa nhạy cảm (PHI) ra ngoài tệp tin log hệ thống (console logs).
-- API MCP giới hạn tối đa 10 loại thuốc kiểm tra tương tác cùng lúc và chặn các tên thuốc quá 100 ký tự để phòng ngừa tấn công DoS.
+Two demo accounts are pre-seeded so judges can try the app without registering. Use the **Login as Admin** / **Login as User** buttons on the sign-in screen to auto-fill credentials:
+
+| Role | Email | Password | Access |
+|------|-------|----------|--------|
+| **Admin** | `admin@medimate.ai` | `admin123456` | Admin Portal — system stats, patient directory, emergency broadcast |
+| **Patient** | `user@medimate.ai` | `user123456` | Personal medication management, scheduling, AI agent with prescription OCR |
+
+---
+
+## 🔒 Security & RLS
+
+MediMate AI applies HIPAA-inspired safeguards:
+
+- **Authentication on every user-facing API route** via Supabase JWT session cookies.
+- **Tightened RLS on `medication_logs`**: the `INSERT` policy verifies ownership of *both* the log's `user_id` **and** the referenced `medication_id`'s owner, preventing cross-account log injection:
+  ```sql
+  WITH CHECK (
+      auth.uid() = user_id
+      AND EXISTS (
+          SELECT 1 FROM public.medications
+          WHERE id = medication_id AND user_id = auth.uid()
+      )
+  )
+  ```
+- **No PHI in logs** — patient medical data is never written to server console logs.
+- **DoS limits** on the MCP endpoint — max 10 drugs per interaction check and drug names capped at 100 characters.
+- **Fail-safe interaction gate** — if the interaction check fails or cannot be parsed, the agent warns the user instead of silently saving the medication as "safe".
+- **Server-side admin allowlist** — Admin access is decided by `ADMIN_EMAILS` on the server and cannot be spoofed from the client.

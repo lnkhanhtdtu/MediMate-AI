@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "MediMate AI - Trợ lý Nhắc lịch & Kiểm tra Tương tác Thuốc thông minh",
+  title: "MediMate AI - Smart Medication Reminder & Drug-Interaction Checker",
   description:
-    "Trợ lý sức khỏe ứng dụng trí tuệ nhân tạo (AI) giúp nhắc lịch uống thuốc, theo dõi tiến độ tuân thủ và tự động kiểm tra tương tác thuốc an toàn y khoa qua dữ liệu openFDA.",
+    "An AI-powered health assistant that reminds you to take your medications, tracks treatment adherence, and automatically screens for dangerous drug interactions using openFDA data.",
 };
 
 export default function RootLayout({
@@ -13,7 +13,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi" className="h-full antialiased">
+    <html lang="en" className="h-full antialiased">
       <head>
         {/*
           Fonts loaded via <link> (not next/font) on purpose:
