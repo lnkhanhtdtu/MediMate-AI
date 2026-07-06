@@ -1898,7 +1898,7 @@ export default function Home() {
                       {medications.length === 0 ? (
                         <ComingSoon showDevBadge={false} lang={lang} icon="calendar_month" title={lang === 'vi' ? 'Chưa có thuốc nào trong lịch' : 'No medications yet'} desc={lang === 'vi' ? 'Thêm thuốc hoặc quét đơn thuốc để xem lịch uống theo tuần.' : 'Add a medication or scan a prescription to see your weekly plan.'} cta={lang === 'vi' ? 'Thêm thuốc' : 'Add medication'} onCta={() => setShowAddModal(true)} />
                       ) : (
-                        <div className="mm-card" style={{ padding: 0, overflow: 'hidden' }}>
+                        <div className="mm-card" style={{ padding: 0, overflow: 'hidden', flexShrink: 0 }}>
                           <div style={{ overflowX: 'auto' }}>
                             <div style={{ minWidth: '760px' }}>
                               {/* header */}
