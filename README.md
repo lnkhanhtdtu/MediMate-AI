@@ -201,7 +201,7 @@ MediMate AI applies HIPAA-inspired safeguards:
 - **No PHI in logs** — patient medical data is never written to server console logs.
 - **DoS limits** on both tool transports — max 10 drugs per interaction check and drug names capped at 100 characters (single source of truth in `src/services/drugInteraction.ts`).
 - **Scoped anonymous surface** — the public MCP server (`/api/mcp-server/mcp`) is the only unauthenticated route, and it serves **only public openFDA data**, never patient data; the internal `/api/mcp` transport still requires a Supabase session.
-- **Fail-safe interaction gate** — if the interaction check fails or cannot be parsed, the agent warns the user instead of silently saving the medication as "safe".
+- **Fail-safe interaction gate** — a genuine HIGH/MEDIUM interaction blocks the write and requires explicit confirmation; a drug openFDA can't verify is saved but flagged as unverified (with advice to consult a professional) rather than silently recorded as "safe".
 - **Server-side admin allowlist** — Admin access is decided by `ADMIN_EMAILS` on the server and cannot be spoofed from the client.
 
 ---

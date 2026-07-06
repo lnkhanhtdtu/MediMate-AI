@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="MediMate AI">
+  <defs>
+    <linearGradient id="mm" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3f7a5e"/>
+      <stop offset="1" stop-color="#2c5b44"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#mm)"/>
+  <!-- Two-tone medication capsule, rotated for a dynamic mark -->
+  <g transform="rotate(-40 256 256)">
+    <path d="M256 196 H206 A60 60 0 0 0 206 316 H256 Z" fill="#ffffff"/>
+    <path d="M256 196 H306 A60 60 0 0 1 306 316 H256 Z" fill="#cfe3d6"/>
+    <rect x="251" y="196" width="10" height="120" fill="#2c5b44" opacity="0.35"/>
+  </g>
+</svg>

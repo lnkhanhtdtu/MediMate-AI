@@ -85,6 +85,7 @@ const translations = {
     welcome: "Xin chào! Tôi là trợ lý sức khỏe MediMate AI. Bạn có thể nhập lịch uống thuốc bằng ngôn ngữ tự nhiên (ví dụ: \"Nhắc tớ uống Aspirin 81mg lúc 8h sáng hàng ngày\") hoặc nhắn cho tôi khi đã uống thuốc (ví dụ: \"Tớ đã uống Aspirin rồi\"). Tôi sẽ tự động kiểm tra tương tác thuốc giúp bạn nhé! 💊",
     typeMsg: "Nhập tin nhắn nhắc thuốc, hỏi đáp sức khỏe...",
     aiThinking: "MediMate AI đang phân tích...",
+    imageUploaded: "Đã tải ảnh lên để AI phân tích",
     send: "Gửi",
     loginTitle: "Chào Mừng Đến Với MediMate AI",
     loginSub: "Trợ lý ảo thông minh nhắc lịch và phân tích tương tác thuốc bằng AI",
@@ -146,6 +147,7 @@ const translations = {
     welcome: "Hello! I am your MediMate AI health assistant. You can enter your medication schedule using natural language (e.g., \"Remind me to take Aspirin 81mg at 8 AM daily\") or tell me when you have taken a pill (e.g., \"I took my Aspirin\"). I will automatically check for drug interactions for you! 💊",
     typeMsg: "Type a medication reminder or ask health questions...",
     aiThinking: "MediMate AI is analyzing...",
+    imageUploaded: "Image uploaded for AI analysis",
     send: "Send",
     loginTitle: "Welcome to MediMate AI",
     loginSub: "Intelligent virtual assistant for medication reminders and AI drug interaction checks",
@@ -917,7 +919,7 @@ export default function Home() {
     const imagePayload = selectedImage
 
     const displayContent = imagePayload
-      ? `${userText} *(Đã tải ảnh lên để AI phân tích)*`
+      ? `${userText} *(${t.imageUploaded})*`
       : userText
 
     setMessages((prev) => [...prev, { role: 'user', content: displayContent }])
@@ -965,7 +967,7 @@ export default function Home() {
       }
     } catch (err) {
       console.error(err)
-      setMessages((prev) => [...prev, { role: 'system', content: '❌ Lỗi kết nối đến máy chủ.' }])
+      setMessages((prev) => [...prev, { role: 'system', content: `❌ ${lang === 'vi' ? 'Lỗi kết nối đến máy chủ.' : 'Could not connect to the server.'}` }])
     } finally {
       setLoadingChat(false)
     }
@@ -994,7 +996,9 @@ export default function Home() {
           ...prev,
           {
             role: 'model',
-            content: `⚠️ *Bỏ qua cảnh báo.* Đã thêm thuốc **${warningInfo.medication.name}** vào lịch trình theo yêu cầu của bạn.`,
+            content: lang === 'vi'
+              ? `⚠️ *Bỏ qua cảnh báo.* Đã thêm thuốc **${warningInfo.medication.name}** vào lịch trình theo yêu cầu của bạn.`
+              : `⚠️ *Warning ignored.* Added **${warningInfo.medication.name}** to your schedule as requested.`,
           },
         ])
         setWarningInfo(null)

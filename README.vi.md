@@ -202,7 +202,7 @@ MediMate AI áp dụng các biện pháp lấy cảm hứng từ HIPAA:
 - **Không log PHI** — dữ liệu y tế của bệnh nhân không bao giờ được ghi ra console log máy chủ.
 - **Giới hạn chống DoS** trên cả hai transport công cụ — tối đa 10 thuốc mỗi lượt kiểm tra tương tác, tên thuốc giới hạn 100 ký tự (một nguồn sự thật duy nhất tại `src/services/drugInteraction.ts`).
 - **Bề mặt ẩn danh có giới hạn** — MCP server công khai (`/api/mcp-server/mcp`) là route không xác thực duy nhất, và chỉ phục vụ **dữ liệu openFDA công khai**, không bao giờ là dữ liệu bệnh nhân; transport nội bộ `/api/mcp` vẫn yêu cầu Supabase session.
-- **Cổng kiểm tra tương tác fail-safe** — nếu việc kiểm tra lỗi hoặc không parse được, agent cảnh báo người dùng thay vì âm thầm lưu thuốc như thể "an toàn".
+- **Cổng kiểm tra tương tác fail-safe** — khi phát hiện tương tác thật ở mức cao/trung bình, hệ thống chặn ghi và yêu cầu người dùng xác nhận tường minh; còn thuốc mà openFDA không có dữ liệu để đối chiếu thì vẫn được lưu nhưng gắn nhãn "chưa xác minh" (kèm khuyến cáo hỏi bác sĩ/dược sĩ) thay vì âm thầm coi là "an toàn".
 - **Allowlist admin phía server** — quyền admin do `ADMIN_EMAILS` quyết định ở phía server, không thể giả mạo từ client.
 
 ---

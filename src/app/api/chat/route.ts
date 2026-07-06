@@ -6,6 +6,7 @@ import {
   addMedication,
   getMedicationLogs,
   updateLogStatus,
+  isValidSchedule,
 } from '@/services/medicationService'
 import { apiError } from '@/utils/apiError'
 
@@ -214,7 +215,15 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
     if (nluResult.action === 'ADD_MEDICATION' && Array.isArray(nluResult.medication_details) && nluResult.medication_details.length > 0) {
       const newMeds = nluResult.medication_details
       const savedMeds = []
+      // A REAL detected interaction (high/medium) blocks the save and requires confirmation.
       const warnings = []
+      // openFDA had no data (common for non-US drugs) or the checker was unparseable: we
+      // could not verify, but per product decision we still SAVE and attach a soft note
+      // rather than blocking — only a genuine detected interaction fails closed.
+      const unverified: string[] = []
+      // The AI couldn't determine a reminder time: a medication without a schedule has no
+      // reminders (and would fail /api/medications validation), so we skip it and ask.
+      const needsTime: string[] = []
 
       // Generate a default prescription name based on source (OCR image vs chat) and date/time
       const now = new Date()
@@ -225,6 +234,13 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
         : `Đơn thuốc từ chat (${dateStr} ${timeStr})`)
 
       for (const newMed of newMeds) {
+        // Can't schedule reminders without a valid HH:MM time — skip and ask for it
+        // instead of persisting a useless record with an empty schedule.
+        if (!isValidSchedule(newMed.schedule)) {
+          needsTime.push(newMed.name)
+          continue
+        }
+
         const existingDrugNames = [
           ...currentMedications.map((m) => m.name),
           ...savedMeds.map((m) => m.name)
@@ -233,14 +249,14 @@ QUY TẮC AN TOÀN QUAN TRỌNG (GUARDRAILS):
         // If we have existing medications, check for interactions
         if (existingDrugNames.length > 0) {
           const allDrugsToCheck = [...existingDrugNames, newMed.name]
-          
+
           // Call local MCP Server route to query OpenFDA
           const mcpUrl = new URL('/api/mcp', request.url).toString()
           let mcpReport = ''
           try {
             const mcpRes = await fetch(mcpUrl, {
               method: 'POST',
-              headers: { 
+              headers: {
                 'Content-Type': 'application/json',
                 'Cookie': request.headers.get('cookie') || '',
               },
@@ -298,18 +314,12 @@ Hãy trả về phản hữu JSON theo định dạng sau:
 
             const checkResult = safeParseJson<any>(checkResponse.text)
 
-            // Fail-safe: if the checker output can't be parsed, do NOT assume the drug is
-            // safe — surface uncertainty and let the user confirm with a professional.
             if (!checkResult) {
-              warnings.push({
-                severity: 'medium',
-                explanation: `Không phân tích được kết quả kiểm tra tương tác cho "${newMed.name}". Vui lòng hỏi ý kiến bác sĩ hoặc dược sĩ trước khi sử dụng.`,
-                medication: newMed,
-              })
-              continue
-            }
-
-            if (checkResult.has_interaction && (checkResult.severity === 'high' || checkResult.severity === 'medium')) {
+              // Checker output unparseable — we couldn't verify. Save with a soft note
+              // (see `unverified`) rather than blocking a drug that may be perfectly fine.
+              unverified.push(newMed.name)
+            } else if (checkResult.has_interaction && (checkResult.severity === 'high' || checkResult.severity === 'medium')) {
+              // A genuine, notable interaction — this is the one case that fails closed.
               warnings.push({
                 severity: checkResult.severity,
                 explanation: checkResult.explanation,
@@ -317,19 +327,15 @@ Hãy trả về phản hữu JSON theo định dạng sau:
               })
               continue
             }
+            // else: low/none severity → verified safe, fall through and save.
           } else {
-            // Fail-safe: the OpenFDA lookup failed or returned nothing. Don't assume the new
-            // drug is safe — warn and require confirmation instead of silently saving it.
-            warnings.push({
-              severity: 'medium',
-              explanation: `Chưa xác minh được tương tác thuốc cho "${newMed.name}" (không lấy được dữ liệu từ OpenFDA). Vui lòng hỏi ý kiến bác sĩ hoặc dược sĩ trước khi sử dụng.`,
-              medication: newMed,
-            })
-            continue
+            // openFDA returned no data for this drug (very common outside the US drug
+            // catalogue). We can't verify, but we don't block — save with a soft note.
+            unverified.push(newMed.name)
           }
         }
 
-        // No interaction or safe, save it
+        // No blocking interaction — save it
         const saved = await addMedication({
           name: newMed.name,
           dosage: newMed.dosage,
@@ -345,14 +351,25 @@ Hãy trả về phản hữu JSON theo định dạng sau:
         }
       }
 
-      // If we have warnings (interaction found for some drugs), return warning details.
-      // Also surface which meds WERE saved so the user isn't left thinking nothing happened
-      // when a multi-drug prescription had one flagged interaction.
+      // Soft, non-blocking notes appended to whichever response we return below.
+      const unverifiedNote = unverified.length > 0
+        ? (isEn
+            ? `\n\nℹ️ Couldn't verify against openFDA (not in the US drug catalogue): ${unverified.join(', ')}. Please double-check with your doctor or pharmacist.`
+            : `\n\nℹ️ Chưa đối chiếu được với openFDA (không có trong danh mục thuốc Mỹ): ${unverified.join(', ')}. Bạn nên hỏi thêm bác sĩ hoặc dược sĩ để chắc chắn.`)
+        : ''
+      const needsTimeNote = needsTime.length > 0
+        ? (isEn
+            ? `\n\n⏰ I couldn't tell what time to remind you for: ${needsTime.join(', ')}. Please tell me the time (e.g. "8:00 AM and 8:00 PM") so I can schedule ${needsTime.length > 1 ? 'them' : 'it'}.`
+            : `\n\n⏰ Mình chưa rõ giờ nhắc cho: ${needsTime.join(', ')}. Bạn cho mình biết giờ uống (ví dụ: "8h sáng và 8h tối") để mình lên lịch nhé.`)
+        : ''
+
+      // If we have a real interaction warning, return it. Also surface which meds WERE
+      // saved so the user isn't left thinking nothing happened on a multi-drug prescription.
       if (warnings.length > 0) {
         const savedNote = savedMeds.length > 0
           ? (isEn
-              ? `\n\n✅ Already added (no interaction): ${savedMeds.map((m) => m.name).join(', ')}.`
-              : `\n\n✅ Đã thêm (không có tương tác): ${savedMeds.map((m) => m.name).join(', ')}.`)
+              ? `\n\n✅ Already added: ${savedMeds.map((m) => m.name).join(', ')}.`
+              : `\n\n✅ Đã thêm: ${savedMeds.map((m) => m.name).join(', ')}.`)
           : ''
         const sev = warnings[0].severity === 'high'
           ? (isEn ? 'High risk' : 'Nguy hiểm cao')
@@ -365,7 +382,7 @@ Hãy trả về phản hữu JSON theo định dạng sau:
           warning: warnings[0],
           warnings,
           savedMeds,
-          message: `${head}${savedNote}`,
+          message: `${head}${savedNote}${unverifiedNote}${needsTimeNote}`,
         })
       }
 
@@ -376,9 +393,17 @@ Hãy trả về phản hữu JSON theo định dạng sau:
           medication: savedMeds[0],
           medications: savedMeds,
           fromImage: contentParts.some((p) => typeof p === 'object' && 'inlineData' in p),
-          message: isEn
+          message: (isEn
             ? `✅ **Added ${savedMeds.length} medication(s) successfully!**\n- Medications: ${medNames}\n- Each drug is stored separately for accurate stock tracking and interaction checks.`
-            : `✅ **Đã thêm lịch uống ${savedMeds.length} thuốc thành công!**\n- Các thuốc: ${medNames}\n- Hệ thống đã tự động lưu trữ từng loại thuốc riêng biệt để theo dõi tồn kho và cảnh báo chính xác nhất.`,
+            : `✅ **Đã thêm lịch uống ${savedMeds.length} thuốc thành công!**\n- Các thuốc: ${medNames}\n- Hệ thống đã tự động lưu trữ từng loại thuốc riêng biệt để theo dõi tồn kho và cảnh báo chính xác nhất.`) + unverifiedNote + needsTimeNote,
+        })
+      } else if (needsTime.length > 0) {
+        // Nothing saved only because timing was missing — ask for it (don't error out).
+        return NextResponse.json({
+          action: 'CHAT_RESPONSE',
+          message: (isEn
+            ? `I found these medication(s) but need a reminder time before I can schedule them.`
+            : `Mình đã đọc được thuốc nhưng cần biết giờ nhắc trước khi lên lịch.`) + needsTimeNote,
         })
       } else {
         return NextResponse.json({ error: isEn ? 'Could not save medication to the database.' : 'Không thể lưu thuốc vào cơ sở dữ liệu.' }, { status: 500 })

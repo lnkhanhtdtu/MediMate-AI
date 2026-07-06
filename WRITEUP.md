@@ -92,8 +92,8 @@ User (chat text / prescription photo)
 [Interaction Checker Agent]  ── Gemini reasons over the raw label data vs. the
         │                        patient's existing drugs
         ▼
-[Safety Gate]  ── HIGH/MEDIUM risk (or an unparseable/failed check) → STOP and
-        │          warn the user; only a clean result proceeds
+[Safety Gate]  ── a genuine HIGH/MEDIUM interaction → STOP and require explicit
+        │          confirmation; a drug openFDA can't verify is saved but flagged
         ▼
 [Write to Supabase]  ── schedule the doses (RLS-protected)
 ```
@@ -117,7 +117,7 @@ Because this app handles personal health information, safety is not a feature bo
 - **No PHI in logs** — patient drug data is never written to server console output.
 - **DoS limits** on the tool endpoint — at most 10 drugs per interaction check, drug names capped at 100 characters.
 - **Server-side admin allowlist** — Admin access is decided by an `ADMIN_EMAILS` env allowlist checked on the server, replacing an earlier client-spoofable `email.includes('admin')` check.
-- **Fail-safe interaction gate** — the defining safety property. If the interaction check errors out or returns something the agent cannot parse, the system **warns the user rather than silently recording the drug as safe.** An agent that fails closed, not open, is the right default for medicine.
+- **Fail-safe interaction gate** — the defining safety property. When the interaction checker finds a genuine HIGH or MEDIUM risk, the system **fails closed**: it blocks the database write and requires the user to explicitly confirm before the drug is scheduled. For a drug openFDA simply has no label for (common outside the US catalogue), the agent does not block usability — it saves the medication but **flags it as unverified and advises consulting a professional**, rather than silently recording it as "safe." Fail closed on real danger, transparent about uncertainty.
 
 The value is concrete: a patient who cannot fill out a structured form can still get their medications scheduled correctly from a photo or a sentence, and can be actively protected from a dangerous combination they had no way to know about — all while their data stays isolated per-account.
 
