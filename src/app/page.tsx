@@ -1015,6 +1015,18 @@ export default function Home() {
     }
   }
 
+  // Reset the conversation back to the initial welcome message. The chat is
+  // client-side only (no server-side transcript), so clearing state is enough.
+  const handleClearChat = () => {
+    if (messages.length <= 1) return
+    if (!confirm(lang === 'vi' ? 'Xoá toàn bộ lịch sử trò chuyện?' : 'Clear the entire chat history?')) return
+    setMessages([{ role: 'model', content: t.welcome }])
+    setWarningInfo(null)
+    setPrescriptionReview(null)
+    setSelectedImage(null)
+    setInputMessage('')
+  }
+
   // Show/hide password toggle for the auth form (MediMate redesign)
   const [showAuthPassword, setShowAuthPassword] = useState(false)
 
@@ -1471,6 +1483,17 @@ export default function Home() {
                     <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--mm-primary)' }} />{lang === 'vi' ? 'Trực tuyến · trả lời bằng tiếng Việt' : 'Online · replies in Vietnamese'}
                   </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={handleClearChat}
+                  disabled={loadingChat || messages.length <= 1}
+                  className="mm-btn mm-btn-ghost"
+                  title={lang === 'vi' ? 'Xoá lịch sử trò chuyện' : 'Clear chat history'}
+                  aria-label={lang === 'vi' ? 'Xoá lịch sử trò chuyện' : 'Clear chat history'}
+                  style={{ padding: '8px', borderRadius: '10px', color: 'var(--mm-text-faint)', flexShrink: 0, opacity: (loadingChat || messages.length <= 1) ? 0.4 : 1, cursor: (loadingChat || messages.length <= 1) ? 'not-allowed' : 'pointer' }}
+                >
+                  <span className="ms" style={{ fontSize: '20px' }}>delete_sweep</span>
+                </button>
               </div>
               {/* Messages */}
               <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px', background: '#FCFBF8' }}>
